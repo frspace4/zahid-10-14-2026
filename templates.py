@@ -1392,10 +1392,12 @@ function renderCards(){
     const isPaused = status === 'PAUSED';
 
     // Green + Number difference detection
-    const diff = recentDiffMap[acc.uid] || (acc.last_gain > 0 ? acc.last_gain : null);
+    const diffEntry = recentDiffMap[acc.uid];
     let gainBadgeHtml = '';
-    if(diff && diff > 0){
-      gainBadgeHtml = '<span class="gain-pop-green">+' + diff.toLocaleString() + '</span>';
+    if(diffEntry && diffEntry.gain > 0){
+      gainBadgeHtml = '<span class="gain-pop-green">+' + diffEntry.gain.toLocaleString() + '</span>';
+    } else if(acc.last_gain > 0 && acc.last_gain_time && ((Date.now() / 1000) - acc.last_gain_time < 20)){
+      gainBadgeHtml = '<span class="gain-pop-green">+' + acc.last_gain.toLocaleString() + '</span>';
     }
 
     // Status class mapping
@@ -1444,7 +1446,7 @@ function renderCards(){
     // Stats Grid
     html += '<div class="card-stats">';
     html += '<div class="c-stat"><div class="l">EXP</div><div class="v">' + curExp.toLocaleString() + '</div></div>';
-    html += '<div class="c-stat"><div class="l">Gained</div><div class="v g">+' + gained.toLocaleString() + gainBadgeHtml + '</div></div>';
+    html += '<div class="c-stat"><div class="l">Gained</div><div class="v g">+' + gained.toLocaleString() + (gainBadgeHtml ? ' ' + gainBadgeHtml : '') + '</div></div>';
     html += '<div class="c-stat"><div class="l">Matches</div><div class="v">' + matches + '</div></div>';
     html += '</div>';
 
@@ -1524,7 +1526,7 @@ function updateControlsUI(st){
     document.getElementById('inp-level-limit').value = st.level_limit;
     const lvlHint = document.getElementById('hint-level-limit');
     if(parseInt(st.level_limit) > 0) lvlHint.textContent = 'Target: Level ' + st.level_limit;
-    else lvlHint.textContent = 'No limit';
+    else lvlHint.textContent = 'No limit (accounts are never auto-deleted)';
   }
 
   // Game Mode
@@ -1578,14 +1580,22 @@ async function fetchStats(){
     if(d.expired){ window.location.href = '/expired'; return; }
 
     // Detect EXP diff for the green + number badge
+    const nowTs = Date.now();
     (d.accounts || []).forEach(acc => {
       const prev = prevGainedMap[acc.uid];
       if(prev !== undefined && acc.gained_exp > prev){
         const diff = acc.gained_exp - prev;
-        recentDiffMap[acc.uid] = diff;
+        recentDiffMap[acc.uid] = { gain: diff, time: nowTs };
       }
       prevGainedMap[acc.uid] = acc.gained_exp;
     });
+
+    // Auto-clear gains older than 15 seconds
+    for(const uid in recentDiffMap){
+      if(nowTs - recentDiffMap[uid].time > 15000){
+        delete recentDiffMap[uid];
+      }
+    }
 
     cachedAccounts = d.accounts || [];
     updateControlsUI(d.settings);
@@ -1624,13 +1634,15 @@ function toggleTargetDelete(){
   saveSettings();
 }
 function setExpLimit(){
-  const val = parseInt(document.getElementById('inp-exp-limit').value) || 0;
+  const raw = document.getElementById('inp-exp-limit').value.trim();
+  const val = raw === '' ? 0 : Math.max(0, parseInt(raw) || 0);
   cachedSettings.exp_limit = val;
   updateControlsUI(cachedSettings);
   saveSettings();
 }
 function setLevelLimit(){
-  const val = parseInt(document.getElementById('inp-level-limit').value) || 21;
+  const raw = document.getElementById('inp-level-limit').value.trim();
+  const val = raw === '' ? 21 : Math.max(0, parseInt(raw) || 0);
   cachedSettings.level_limit = val;
   updateControlsUI(cachedSettings);
   saveSettings();
@@ -1642,17 +1654,23 @@ function setGameMode(mode){
 }
 
 async function saveSettings(){
+  const rawDays = document.getElementById('inp-days').value.trim();
+  const rawSlots = document.getElementById('inp-slots').value.trim();
+  const rawRetry = document.getElementById('inp-retry').value.trim();
+  const rawDaily = document.getElementById('inp-daily-limit').value.trim();
+  const rawExp = document.getElementById('inp-exp-limit').value.trim();
+  const rawLvl = document.getElementById('inp-level-limit').value.trim();
   const payload = {
     settings: {
       daily_autoplay: cachedSettings.daily_autoplay || false,
-      days: parseInt(document.getElementById('inp-days').value) || 1,
-      active_slots: parseInt(document.getElementById('inp-slots').value) || 10,
-      login_retry: parseInt(document.getElementById('inp-retry').value) || 3,
-      daily_limit: parseInt(document.getElementById('inp-daily-limit').value) || 60000,
+      days: rawDays === '' ? 1 : Math.max(1, parseInt(rawDays) || 1),
+      active_slots: rawSlots === '' ? 10 : Math.max(1, parseInt(rawSlots) || 10),
+      login_retry: rawRetry === '' ? 3 : Math.max(1, parseInt(rawRetry) || 3),
+      daily_limit: rawDaily === '' ? 60000 : Math.max(0, parseInt(rawDaily) || 0),
       all_bots: cachedSettings.all_bots !== false,
       target_delete: cachedSettings.target_delete || false,
-      exp_limit: parseInt(document.getElementById('inp-exp-limit').value) || 0,
-      level_limit: parseInt(document.getElementById('inp-level-limit').value) || 21,
+      exp_limit: rawExp === '' ? 0 : Math.max(0, parseInt(rawExp) || 0),
+      level_limit: rawLvl === '' ? 21 : Math.max(0, parseInt(rawLvl) || 0),
       game_mode: cachedSettings.game_mode || 'AUTO'
     }
   };
