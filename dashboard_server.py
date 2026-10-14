@@ -182,18 +182,12 @@ class BotState:
 bot_state = BotState()
 
 
-TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "index.html")
-
 async def handle_index(request: web.Request) -> web.Response:
-    if os.path.exists(TEMPLATE_PATH):
-        with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
-            content = f.read()
-    else:
-        try:
-            from templates import DASHBOARD_HTML
-            content = DASHBOARD_HTML.replace("{{USERNAME}}", "Admin")
-        except Exception:
-            content = "<h1>templates/index.html not found!</h1>"
+    try:
+        from templates import DASHBOARD_HTML
+        content = DASHBOARD_HTML.replace("{{USERNAME}}", "Admin")
+    except Exception:
+        content = "<h1>hh X LevelUp Dashboard</h1>"
     return web.Response(text=content, content_type="text/html", charset="utf-8")
 
 
@@ -287,7 +281,7 @@ async def handle_refresh_account(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "error": str(e)})
 
 
-def get_env_port(default: int = 5000) -> int:
+def get_env_port(default: int = 8080) -> int:
     for key in ("PORT", "WEB_PORT"):
         val = str(os.environ.get(key, "")).strip()
         if val.isdigit():
@@ -304,18 +298,25 @@ async def handle_health(request: web.Request) -> web.Response:
 
 
 async def start_web_dashboard(host: str = None, port: int = None):
+    try:
+        import auth_layer
+        return await auth_layer.start_web_dashboard(host=host, port=port)
+    except Exception as e:
+        print(f"[dashboard_server] Delegating to auth_layer failed ({e}), using standalone runner", flush=True)
+
     if host is None:
         host = os.environ.get("HOST", "0.0.0.0")
     if port is None:
-        port = get_env_port(5000)
+        port = get_env_port(8080)
     else:
         try:
             port = int(port)
         except (ValueError, TypeError):
-            port = get_env_port(5000)
+            port = get_env_port(8080)
 
     app = web.Application()
     app.router.add_get("/", handle_index)
+    app.router.add_get("/dashboard", handle_index)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/healthz", handle_health)
     app.router.add_get("/api/health", handle_health)
@@ -329,3 +330,13 @@ async def start_web_dashboard(host: str = None, port: int = None):
     site = web.TCPSite(runner, host, port)
     await site.start()
     print(f"\033[92m[+] Web Dashboard running on http://{host}:{port}\033[0m")
+
+
+if __name__ == "__main__":
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(start_web_dashboard())
+        loop.run_forever()
+    except (KeyboardInterrupt, SystemExit):
+        pass

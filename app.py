@@ -38,14 +38,15 @@ import thunderFF_pb2
 import MajoRLoGinrEq_pb2
 import StartMatch_pb2
 
-from auth_layer import bot_state, start_web_dashboard
 # Compatibility: auth_layer historically imports the worker module as "main".
 # This build runs from app.py, so expose the current module under that legacy name.
 import sys as _sys
 _sys.modules.setdefault("main", _sys.modules[__name__])
 
+from auth_layer import bot_state, start_web_dashboard
+
 # ==================== CONFIGURATION ====================
-def get_env_port(default: int = 8888) -> int:
+def get_env_port(default: int = 8080) -> int:
     for key in ("PORT", "WEB_PORT"):
         val = str(os.environ.get(key, "")).strip()
         if val.isdigit():
@@ -54,7 +55,7 @@ def get_env_port(default: int = 8888) -> int:
 
 
 WEB_HOST = os.environ.get("HOST", "0.0.0.0")
-WEB_PORT = get_env_port(8888)
+WEB_PORT = get_env_port(8080)
 ACCOUNTS_FILE = "accounts.json"
 TOKEN_CACHE_FILE = "token_cache.json"
 DEVICES_FILE = "devices.json"

@@ -1535,7 +1535,10 @@ async def h_acc_check(req):
     try:
         import main as m
     except Exception:
-        return web.json_response({"status": "error", "error": "Main module unavailable"})
+        try:
+            import app as m
+        except Exception:
+            return web.json_response({"status": "error", "error": "Main module unavailable"})
 
     acc_data = None
     if "uid" in d and "password" in d:
@@ -2130,7 +2133,7 @@ async def queue_watcher():
         await asyncio.sleep(3)
 
 
-def get_env_port(default: int = 20335) -> int:
+def get_env_port(default: int = 8080) -> int:
     for key in ("PORT", "WEB_PORT"):
         val = str(os.environ.get(key, "")).strip()
         if val.isdigit():
@@ -2150,12 +2153,12 @@ async def start_web_dashboard(host=None, port=None):
     if host is None:
         host = os.environ.get("HOST", "0.0.0.0")
     if port is None:
-        port = get_env_port(20335)
+        port = get_env_port(8080)
     else:
         try:
             port = int(port)
         except (ValueError, TypeError):
-            port = get_env_port(20335)
+            port = get_env_port(8080)
     app = web.Application()
 
     app.router.add_get("/", h_root)

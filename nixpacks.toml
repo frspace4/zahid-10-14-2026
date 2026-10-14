@@ -2,7 +2,7 @@
 NIXPACKS_PYTHON_VERSION = "3.11"
 
 [phases.setup]
-nixPkgs = ["...", "gcc"]
+nixPkgs = ["gcc"]
 
 [phases.install]
 cmds = ["python -m pip install --no-cache-dir -r requirements.txt"]
