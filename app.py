@@ -1852,9 +1852,9 @@ async def run_account_worker(account_data: Dict, label: str):
     exp_task = None
     try:
         reg = account_data.get('region', 'BD')
-        # 🎯 decide mode from level
+        # 🎯 decide mode from level and preferred mode
         level = account_data.get('level', 1)
-        mode = pick_mode_for_level(level)
+        mode = pick_mode_for_level(level, bot_state.accounts.get(acc_id, {}).get("mode"))
         print_info(f"[MODE] UID {acc_id} (Lvl {level}) → {mode.upper()}")
 
         try:
