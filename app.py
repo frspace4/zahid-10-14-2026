@@ -25,7 +25,6 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from google_play_scraper import app as play_scraper
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from protobuf_decoder.protobuf_decoder import Parser
@@ -94,7 +93,7 @@ class Colors:
 
 def print_colored(text, color=Colors.WHITE):
     try:
-        print(f"{color}{text}{Colors.ENDC}")
+        print(f"{color}{text}{Colors.ENDC}", flush=True)
     except Exception:
         pass
 

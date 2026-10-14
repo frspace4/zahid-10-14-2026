@@ -1222,6 +1222,7 @@ async def h_stats(req):
     total_sec, total_fmt = compute_total_eta(out, settings)
 
     # Compute system stats
+    ram_used, ram_total, ram_pct, cpu_pct = 256, 512, 50, 15
     try:
         import psutil
         vm = psutil.virtual_memory()
@@ -1230,7 +1231,22 @@ async def h_stats(req):
         ram_pct = int(vm.percent)
         cpu_pct = int(psutil.cpu_percent(interval=None))
     except Exception:
-        ram_used, ram_total, ram_pct, cpu_pct = 209908, 330437, 63, 17
+        try:
+            if os.path.exists("/proc/meminfo"):
+                meminfo = {}
+                with open("/proc/meminfo", "r") as f:
+                    for line in f:
+                        parts = line.split(":")
+                        if len(parts) == 2:
+                            meminfo[parts[0].strip()] = int(parts[1].strip().split()[0])
+                total_kb = meminfo.get("MemTotal", 0)
+                avail_kb = meminfo.get("MemAvailable", meminfo.get("MemFree", 0))
+                used_kb = total_kb - avail_kb
+                ram_total = total_kb // 1024
+                ram_used = used_kb // 1024
+                ram_pct = int((used_kb / total_kb) * 100) if total_kb > 0 else 50
+        except Exception:
+            pass
 
     workers_count = sum(len([t for t in w.values() if not t.done()]) for w in USER_WORKERS.values())
 

@@ -1,9 +1,6 @@
 [variables]
 NIXPACKS_PYTHON_VERSION = "3.11"
-
-[phases.setup]
-nixPkgs = ["...", "gcc"]
+PYTHONUNBUFFERED = "1"
 
 [start]
-cmd = "python app.py"
-
+cmd = "python -u app.py"
