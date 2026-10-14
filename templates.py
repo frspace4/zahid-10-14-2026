@@ -509,12 +509,13 @@ body{background:radial-gradient(ellipse at top,#080e1a 0%,#000 60%);padding-bott
       <button class="btn-clear-all" onclick="confirmClearAll()">Clear All IDs</button>
     </div>
 
-    <!-- Direct Standalone Access Meta -->
+    <!-- User Meta & Logout -->
     <div class="user-meta">
-      <div class="mi"><span class="l">Access</span><span class="v" id="ui-u">Direct</span></div>
-      <div class="mi"><span class="l">Status</span><span class="v" id="ui-t">Active</span></div>
+      <div class="mi"><span class="l">User</span><span class="v" id="ui-u">{{USERNAME}}</span></div>
+      <div class="mi"><span class="l">Status</span><span class="v" id="ui-t" style="color:#22c55e">ONLINE</span></div>
       <div class="act">
         <button class="bs bf" id="rf" title="Refresh">__ICON_REFRESH__</button>
+        <a href="/logout" class="bs bg" style="color:#ef4444;border-color:rgba(239,68,68,0.4)" title="Logout">LOGOUT</a>
       </div>
     </div>
   </div>
@@ -979,7 +980,7 @@ async function fetchStats(){
   try{
     const r = await fetch('/api/stats');
     const pingMs = Math.round(performance.now() - t0);
-    if(r.status === 401){ return; }
+    if(r.status === 401){ window.location.href = '/login'; return; }
     const d = await r.json();
 
     if(d.expired){ return; }
@@ -1008,8 +1009,8 @@ async function fetchStats(){
     updateSystemUI(d.system, pingMs);
 
     document.getElementById('val-total-eta').textContent = d.total_eta_formatted || '--';
-    if(document.getElementById('ui-u')) document.getElementById('ui-u').textContent = 'Direct';
-    if(document.getElementById('ui-t')) document.getElementById('ui-t').textContent = 'Active';
+    if(document.getElementById('ui-u')) document.getElementById('ui-u').textContent = d.username || 'Admin';
+    if(document.getElementById('ui-t')) document.getElementById('ui-t').textContent = 'ONLINE';
 
     renderCards();
   }catch(ex){
@@ -1203,12 +1204,261 @@ setInterval(fetchStats, 3000);
 
 DASHBOARD_HTML = DASHBOARD_HTML.replace("__ICON_REFRESH__", _icon("refresh", "currentColor", 14))
 
-# Standalone Dashboard Aliases (landing, pricing, and login barriers removed)
-HOME_HTML = DASHBOARD_HTML
-PLANS_HTML = DASHBOARD_HTML
-LOGIN_HTML = DASHBOARD_HTML
-EXPIRED_HTML = DASHBOARD_HTML
-ADMIN_LOGIN_HTML = DASHBOARD_HTML
+# ==================== UNIFIED LOGIN ====================
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<title>Login - hh X LevelUp</title>
+""" + _FONTS + """
+<style>
+""" + _CSS + """
+body{
+  background: radial-gradient(ellipse at top, #0b1528 0%, #030712 55%, #000 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow-x: hidden;
+  position: relative;
+}
+body::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(59, 130, 246, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(59, 130, 246, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+  pointer-events: none;
+  z-index: 1;
+}
+.login-card {
+  position: relative;
+  z-index: 10;
+  background: linear-gradient(145deg, rgba(13, 20, 36, 0.92) 0%, rgba(8, 12, 22, 0.96) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.28);
+  box-shadow: 0 0 50px rgba(59, 130, 246, 0.15), 0 25px 50px -12px rgba(0, 0, 0, 0.9);
+  border-radius: 20px;
+  max-width: 420px;
+  width: 100%;
+  padding: 38px 32px;
+  backdrop-filter: blur(20px);
+}
+.brand {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.brand-badge {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 14px;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 900;
+  font-size: 22px;
+  color: #fff;
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+}
+.brand-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #fff;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+.brand-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: #60a5fa;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.form-group {
+  margin-bottom: 18px;
+}
+.form-group label {
+  display: block;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.inp-wrap {
+  position: relative;
+}
+.inp-wrap input {
+  width: 100%;
+  background: rgba(4, 7, 15, 0.85);
+  border: 1px solid #1a2842;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: #fff;
+  outline: none;
+  transition: all 0.2s;
+}
+.inp-wrap input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2), 0 0 15px rgba(59, 130, 246, 0.25);
+  background: rgba(8, 14, 28, 0.95);
+}
+.err-box {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #f87171;
+  border-radius: 10px;
+  padding: 11px 14px;
+  font-size: 12px;
+  font-family: 'Inter', sans-serif;
+  margin-bottom: 18px;
+  display: none;
+  text-align: center;
+}
+.err-box.on {
+  display: block;
+}
+.btn-submit {
+  width: 100%;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border: 1px solid rgba(59, 130, 246, 0.6);
+  border-radius: 10px;
+  padding: 14px;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #fff;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.25s;
+  box-shadow: 0 4px 18px rgba(59, 130, 246, 0.35);
+  margin-top: 6px;
+}
+.btn-submit:hover {
+  background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+  box-shadow: 0 6px 24px rgba(59, 130, 246, 0.6);
+  transform: translateY(-1px);
+}
+.btn-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+.footer-meta {
+  margin-top: 24px;
+  text-align: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: #64748b;
+  letter-spacing: 0.8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 16px;
+}
+.footer-meta span {
+  color: #22c55e;
+}
+</style>
+</head>
+<body>
+
+<div class="login-card">
+  <div class="brand">
+    <div class="brand-badge">M</div>
+    <div class="brand-title">hh X LEVELUP</div>
+    <div class="brand-sub">AUTHENTICATION TERMINAL</div>
+  </div>
+
+  <div id="err" class="err-box"></div>
+
+  <form id="login-form" onsubmit="handleLogin(event)" action="/login" method="POST">
+    <div class="form-group">
+      <label for="username">Username</label>
+      <div class="inp-wrap">
+        <input type="text" id="username" name="username" placeholder="Enter username" autocomplete="username" required autofocus>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="password">Password</label>
+      <div class="inp-wrap">
+        <input type="password" id="password" name="password" placeholder="Enter password" autocomplete="current-password" required>
+      </div>
+    </div>
+
+    <button type="submit" id="btn-login" class="btn-submit">AUTHENTICATE</button>
+  </form>
+
+  <div class="footer-meta">
+    SYSTEM STATUS: <span>ONLINE</span> &bull; LEVELUP SYSTEM
+  </div>
+</div>
+
+<script>
+async function handleLogin(e) {
+  if (e) e.preventDefault();
+  const u = document.getElementById('username').value.trim();
+  const p = document.getElementById('password').value.trim();
+  const err = document.getElementById('err');
+  const btn = document.getElementById('btn-login');
+
+  err.classList.remove('on');
+  if (!u || !p) {
+    err.textContent = 'Please enter both username and password';
+    err.classList.add('on');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'AUTHENTICATING...';
+
+  try {
+    const res = await fetch('/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const data = await res.json();
+    if (res.ok && data.status === 'ok') {
+      window.location.href = data.redirect || '/';
+    } else {
+      err.textContent = data.error || 'Invalid credentials';
+      err.classList.add('on');
+      btn.disabled = false;
+      btn.textContent = 'AUTHENTICATE';
+    }
+  } catch (ex) {
+    err.textContent = 'Network or connection error. Try again.';
+    err.classList.add('on');
+    btn.disabled = false;
+    btn.textContent = 'AUTHENTICATE';
+  }
+}
+</script>
+</body>
+</html>
+"""
+
+# Standalone Dashboard & Login Aliases
+HOME_HTML = LOGIN_HTML
+PLANS_HTML = LOGIN_HTML
+EXPIRED_HTML = LOGIN_HTML
+ADMIN_LOGIN_HTML = LOGIN_HTML
 ADMIN_PANEL_HTML = DASHBOARD_HTML
 
 ALL_TEMPLATES = {
