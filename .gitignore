@@ -1,0 +1,10 @@
+test/
+__pycache__/
+*.py[cod]
+*$py.class
+*.tmp
+data/
+.gemini/
+token_cache.json
+token_cache.tmp
+accounts.json
