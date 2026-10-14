@@ -287,22 +287,38 @@ async def handle_refresh_account(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "error": str(e)})
 
 
+def get_env_port(default: int = 5000) -> int:
+    for key in ("PORT", "WEB_PORT"):
+        val = str(os.environ.get(key, "")).strip()
+        if val.isdigit():
+            return int(val)
+    return default
+
+
 async def handle_health(request: web.Request) -> web.Response:
-    return web.Response(text="OK", status=200)
+    return web.json_response({
+        "status": "ok",
+        "service": "udp-levelup",
+        "timestamp": int(time.time())
+    })
 
 
 async def start_web_dashboard(host: str = None, port: int = None):
     if host is None:
         host = os.environ.get("HOST", "0.0.0.0")
     if port is None:
-        port = int(os.environ.get("PORT", 5000))
+        port = get_env_port(5000)
     else:
-        port = int(port)
+        try:
+            port = int(port)
+        except (ValueError, TypeError):
+            port = get_env_port(5000)
 
     app = web.Application()
     app.router.add_get("/", handle_index)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/healthz", handle_health)
+    app.router.add_get("/api/health", handle_health)
     app.router.add_get("/api/stats", handle_get_stats)
     app.router.add_post("/api/account/add", handle_add_account)
     app.router.add_post("/api/account/delete", handle_delete_account)

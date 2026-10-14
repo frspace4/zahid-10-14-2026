@@ -12,6 +12,7 @@ import struct
 import time
 import uuid
 import itertools
+import signal
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -44,8 +45,16 @@ import sys as _sys
 _sys.modules.setdefault("main", _sys.modules[__name__])
 
 # ==================== CONFIGURATION ====================
+def get_env_port(default: int = 8888) -> int:
+    for key in ("PORT", "WEB_PORT"):
+        val = str(os.environ.get(key, "")).strip()
+        if val.isdigit():
+            return int(val)
+    return default
+
+
 WEB_HOST = os.environ.get("HOST", "0.0.0.0")
-WEB_PORT = int(os.environ.get("PORT", os.environ.get("WEB_PORT", 8888)))
+WEB_PORT = get_env_port(8888)
 ACCOUNTS_FILE = "accounts.json"
 TOKEN_CACHE_FILE = "token_cache.json"
 DEVICES_FILE = "devices.json"
@@ -1988,7 +1997,8 @@ async def main():
         await start_web_dashboard(host=WEB_HOST, port=WEB_PORT)
         print_success(f"Web Dashboard live on {WEB_HOST}:{WEB_PORT}")
     except Exception as e:
-        print_error(f"Could not start web dashboard: {e}")
+        print_error(f"FATAL: Could not start web dashboard on {WEB_HOST}:{WEB_PORT}: {e}")
+        raise
 
     async def on_account_added_handler(data):
         if "token" in data and data["token"]:
@@ -2022,14 +2032,27 @@ async def main():
             t = asyncio.create_task(account_loop_guest(u, acc["password"]))
             bot_state.account_workers[u] = t
 
+    stop_event = asyncio.Event()
+
+    if sys.platform != "win32":
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, stop_event.set)
+            except (NotImplementedError, RuntimeError):
+                pass
+
     try:
-        while True:
+        while not stop_event.is_set():
             await asyncio.sleep(1)
     except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    finally:
         print_warning("\n[STOP] Shutting down all accounts...")
         for t in list(bot_state.account_workers.values()):
             t.cancel()
-        await asyncio.gather(*bot_state.account_workers.values(), return_exceptions=True)
+        if bot_state.account_workers:
+            await asyncio.gather(*bot_state.account_workers.values(), return_exceptions=True)
         print_success("All sessions cleanly closed.")
 
 

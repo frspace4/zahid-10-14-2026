@@ -2046,22 +2046,38 @@ async def queue_watcher():
         await asyncio.sleep(3)
 
 
+def get_env_port(default: int = 20335) -> int:
+    for key in ("PORT", "WEB_PORT"):
+        val = str(os.environ.get(key, "")).strip()
+        if val.isdigit():
+            return int(val)
+    return default
+
+
 async def h_health(req):
-    return web.Response(text="OK", status=200)
+    return web.json_response({
+        "status": "ok",
+        "service": "udp-levelup",
+        "timestamp": int(time.time())
+    })
 
 
 async def start_web_dashboard(host=None, port=None):
     if host is None:
         host = os.environ.get("HOST", "0.0.0.0")
     if port is None:
-        port = int(os.environ.get("PORT", 20335))
+        port = get_env_port(20335)
     else:
-        port = int(port)
+        try:
+            port = int(port)
+        except (ValueError, TypeError):
+            port = get_env_port(20335)
     app = web.Application()
 
     app.router.add_get("/", h_root)
     app.router.add_get("/health", h_health)
     app.router.add_get("/healthz", h_health)
+    app.router.add_get("/api/health", h_health)
     app.router.add_get("/login", h_login_get)
     app.router.add_post("/login", h_login_post)
     app.router.add_get("/signup", h_signup)
