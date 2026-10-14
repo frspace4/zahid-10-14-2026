@@ -252,10 +252,28 @@ def _read(path, default):
 
 def _write(path, data):
     _ensure()
-    tmp = path + ".tmp"
+    tmp = f"{path}.{os.getpid()}_{time.time_ns()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
-    os.replace(tmp, path)
+    for _ in range(10):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(0.05)
+        except Exception:
+            break
+    try:
+        os.replace(tmp, path)
+    except Exception:
+        # Fallback direct write
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
 
 
 def load_users():
