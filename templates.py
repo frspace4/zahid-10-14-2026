@@ -476,6 +476,34 @@ body{background:radial-gradient(ellipse at top,#080e1a 0%,#000 60%);padding-bott
 .conf-yes:hover{background:#dc2626}
 .conf-no{background:#1e293b;color:#fff}
 .conf-no:hover{background:#334155}
+
+/* BOTTOM LIVE CONSOLE */
+.console-card{margin-top:28px;margin-bottom:24px;background:#050811;border:1px solid #1a2a44;border-radius:12px;box-shadow:0 12px 35px rgba(0,0,0,0.7);overflow:hidden;display:flex;flex-direction:column}
+.console-head{display:flex;justify-content:space-between;align-items:center;padding:11px 16px;background:#09101d;border-bottom:1px solid #1a2a44;flex-wrap:wrap;gap:10px}
+.console-title{display:flex;align-items:center;gap:10px}
+.live-dot{width:9px;height:9px;border-radius:50%;background:#00ff88;box-shadow:0 0 10px #00ff88;animation:pulse-live 1.8s infinite}
+@keyframes pulse-live{0%{transform:scale(0.85);opacity:0.6}50%{transform:scale(1.25);opacity:1}100%{transform:scale(0.85);opacity:0.6}}
+.console-lbl{font-family:'Orbitron',sans-serif;font-size:11px;font-weight:800;letter-spacing:1.5px;color:#60a5fa;text-transform:uppercase}
+.console-count{font-family:'JetBrains Mono',monospace;font-size:11px;color:#64748b}
+.console-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.console-chk{font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
+.console-chk input{accent-color:#3b82f6;cursor:pointer}
+.console-sel{background:#0e1726;border:1px solid #203554;color:#93c5fd;border-radius:6px;padding:4px 8px;font-size:11px;outline:none;font-family:'Inter',sans-serif;cursor:pointer}
+.console-btn{background:#152238;border:1px solid #253d63;color:#94a3b8;padding:4px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-weight:700;transition:all 0.15s}
+.console-btn:hover{background:#1e3354;color:#fff;border-color:#3b82f6}
+.console-body{height:220px;max-height:220px;overflow-y:auto;padding:12px 14px;background:#03060c;font-family:'JetBrains Mono','Fira Code','Courier New',monospace;font-size:11.5px;line-height:1.6;display:flex;flex-direction:column;gap:4px;transition:all 0.2s ease}
+.console-card.expanded .console-body{height:420px;max-height:420px}
+.console-card.collapsed .console-body{display:none}
+.console-line{word-break:break-all;white-space:pre-wrap;color:#cbd5e1}
+.console-line .log-t{color:#475569;margin-right:6px;user-select:none}
+.console-line .log-badge{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;margin-right:6px;text-transform:uppercase}
+.console-line.info .log-badge{background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3)}
+.console-line.success .log-badge{background:rgba(34,197,94,0.15);color:#22c55e;border:1px solid rgba(34,197,94,0.3)}
+.console-line.warning .log-badge{background:rgba(234,179,8,0.15);color:#eab308;border:1px solid rgba(234,179,8,0.3)}
+.console-line.error .log-badge{background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3)}
+.console-line.success{color:#86efac}
+.console-line.warning{color:#fde047}
+.console-line.error{color:#fca5a5}
 </style>
 </head>
 <body>
@@ -668,6 +696,34 @@ body{background:radial-gradient(ellipse at top,#080e1a 0%,#000 60%);padding-bott
   <!-- SMALL CARD SYSTEM GRID -->
   <div class="cards-grid" id="grid"></div>
 
+  <!-- LIVE SYSTEM CONSOLE -->
+  <div class="console-card" id="console-card">
+    <div class="console-head">
+      <div class="console-title">
+        <span class="live-dot"></span>
+        <span class="console-lbl">LIVE SYSTEM CONSOLE</span>
+        <span class="console-count" id="console-log-count">(0 logs)</span>
+      </div>
+      <div class="console-controls">
+        <label class="console-chk">
+          <input type="checkbox" id="chk-autoscroll" checked> Auto-scroll
+        </label>
+        <select id="sel-log-filter" class="console-sel" onchange="renderLogs()">
+          <option value="ALL">All Levels</option>
+          <option value="INFO">Info</option>
+          <option value="SUCCESS">Success</option>
+          <option value="WARN">Warnings</option>
+          <option value="ERROR">Errors</option>
+        </select>
+        <button type="button" class="console-btn" onclick="clearConsole()">Clear</button>
+        <button type="button" class="console-btn" id="btn-toggle-console" onclick="toggleConsoleSize()">Expand</button>
+      </div>
+    </div>
+    <div class="console-body" id="console-body">
+      <div class="console-line info"><span class="log-t">[--:--:--]</span> <span class="log-badge info">[INIT]</span> Live console initialized. Waiting for bot activity...</div>
+    </div>
+  </div>
+
 </div>
 
 <!-- UNLIMITED BULK ADD MODAL -->
@@ -712,6 +768,73 @@ let cachedAccounts = [];
 let cachedSettings = {};
 const prevGainedMap = {};
 const recentDiffMap = {};
+let cachedLogs = [];
+let consoleFilter = 'ALL';
+let consoleAutoScroll = true;
+
+function renderLogs(){
+  const body = document.getElementById('console-body');
+  if(!body) return;
+  const sel = document.getElementById('sel-log-filter');
+  consoleFilter = sel ? sel.value : 'ALL';
+  const chk = document.getElementById('chk-autoscroll');
+  consoleAutoScroll = chk ? chk.checked : true;
+
+  const countLbl = document.getElementById('console-log-count');
+  if(countLbl) countLbl.textContent = '(' + cachedLogs.length + ' logs)';
+
+  const filtered = cachedLogs.filter(function(l){
+    if(consoleFilter === 'ALL') return true;
+    const lvl = (l.level || 'info').toUpperCase();
+    if(consoleFilter === 'INFO') return lvl === 'INFO';
+    if(consoleFilter === 'SUCCESS') return lvl === 'SUCCESS';
+    if(consoleFilter === 'WARN') return lvl === 'WARNING' || lvl === 'WARN';
+    if(consoleFilter === 'ERROR') return lvl === 'ERROR' || lvl === 'FAIL';
+    return true;
+  });
+
+  if(filtered.length === 0){
+    body.innerHTML = '<div class="console-line info"><span class="log-t">[--:--:--]</span> <span class="log-badge info">[IDLE]</span> No log entries match filter.</div>';
+    return;
+  }
+
+  let html = '';
+  for(let i = 0; i < filtered.length; i++){
+    const log = filtered[i];
+    const lvl = (log.level || 'info').toLowerCase();
+    const lvlNorm = lvl === 'fail' ? 'error' : (lvl === 'warning' ? 'warning' : lvl);
+    const badgeText = lvl === 'warning' ? 'WARN' : (lvl === 'fail' ? 'ERR' : lvl.toUpperCase());
+    const t = log.time || '';
+    const msg = esc(log.message || '');
+    html += '<div class="console-line ' + lvlNorm + '"><span class="log-t">[' + t + ']</span> <span class="log-badge ' + lvlNorm + '">[' + badgeText + ']</span> ' + msg + '</div>';
+  }
+  body.innerHTML = html;
+
+  if(consoleAutoScroll){
+    body.scrollTop = body.scrollHeight;
+  }
+}
+
+async function clearConsole(){
+  cachedLogs = [];
+  renderLogs();
+  try{
+    await fetch('/api/logs/clear', {method: 'POST'});
+  }catch(e){}
+}
+
+function toggleConsoleSize(){
+  const card = document.getElementById('console-card');
+  const btn = document.getElementById('btn-toggle-console');
+  if(!card || !btn) return;
+  if(card.classList.contains('expanded')){
+    card.classList.remove('expanded');
+    btn.textContent = 'Expand';
+  } else {
+    card.classList.add('expanded');
+    btn.textContent = 'Compact';
+  }
+}
 
 function esc(s){if(s==null)return'';return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 
@@ -1035,6 +1158,10 @@ async function fetchStats(){
     }
 
     cachedAccounts = d.accounts || [];
+    if(Array.isArray(d.logs)){
+      cachedLogs = d.logs;
+      renderLogs();
+    }
     updateControlsUI(d.settings);
     updateCountsUI(d.counts);
     updateSystemUI(d.system, pingMs);

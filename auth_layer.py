@@ -1369,7 +1369,17 @@ async def h_stats(req):
         "total_eta_seconds": total_sec,
         "total_eta_formatted": total_fmt,
         "accounts": out,
+        "logs": ds.bot_state.logs[-100:],
     })
+
+
+async def h_logs(req):
+    return web.json_response({"logs": ds.bot_state.logs[-100:]})
+
+
+async def h_logs_clear(req):
+    ds.bot_state.logs.clear()
+    return web.json_response({"status": "ok"})
 
 
 async def h_settings_save(req):
@@ -2348,6 +2358,8 @@ async def start_web_dashboard(host=None, port=None):
     app.router.add_post("/api/account/delete", h_acc_del)
     app.router.add_post("/api/account/pause", h_acc_pause)
     app.router.add_post("/api/account/resume", h_acc_resume)
+    app.router.add_get("/api/logs", h_logs)
+    app.router.add_post("/api/logs/clear", h_logs_clear)
 
     app.router.add_get(ADMIN_PATH, h_adm_login_get)
     app.router.add_post(ADMIN_PATH, h_adm_login_post)

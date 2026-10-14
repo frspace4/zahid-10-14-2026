@@ -109,6 +109,13 @@ def print_colored(text, color=Colors.WHITE):
         print(f"{color}{text}{Colors.ENDC}", flush=True)
     except Exception:
         pass
+    if color not in (Colors.GREEN, Colors.FAIL, Colors.WARNING, Colors.CYAN):
+        try:
+            clean = str(text).strip()
+            if clean and not clean.startswith("="):
+                bot_state.log(clean, "info")
+        except Exception:
+            pass
 
 
 def print_success(text):
