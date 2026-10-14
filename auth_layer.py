@@ -2046,10 +2046,22 @@ async def queue_watcher():
         await asyncio.sleep(3)
 
 
-async def start_web_dashboard(host="0.0.0.0", port=20335):
+async def h_health(req):
+    return web.Response(text="OK", status=200)
+
+
+async def start_web_dashboard(host=None, port=None):
+    if host is None:
+        host = os.environ.get("HOST", "0.0.0.0")
+    if port is None:
+        port = int(os.environ.get("PORT", 20335))
+    else:
+        port = int(port)
     app = web.Application()
 
     app.router.add_get("/", h_root)
+    app.router.add_get("/health", h_health)
+    app.router.add_get("/healthz", h_health)
     app.router.add_get("/login", h_login_get)
     app.router.add_post("/login", h_login_post)
     app.router.add_get("/signup", h_signup)

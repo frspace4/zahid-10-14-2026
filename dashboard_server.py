@@ -287,9 +287,22 @@ async def handle_refresh_account(request: web.Request) -> web.Response:
         return web.json_response({"status": "error", "error": str(e)})
 
 
-async def start_web_dashboard(host: str = "0.0.0.0", port: int = 5000):
+async def handle_health(request: web.Request) -> web.Response:
+    return web.Response(text="OK", status=200)
+
+
+async def start_web_dashboard(host: str = None, port: int = None):
+    if host is None:
+        host = os.environ.get("HOST", "0.0.0.0")
+    if port is None:
+        port = int(os.environ.get("PORT", 5000))
+    else:
+        port = int(port)
+
     app = web.Application()
     app.router.add_get("/", handle_index)
+    app.router.add_get("/health", handle_health)
+    app.router.add_get("/healthz", handle_health)
     app.router.add_get("/api/stats", handle_get_stats)
     app.router.add_post("/api/account/add", handle_add_account)
     app.router.add_post("/api/account/delete", handle_delete_account)
@@ -299,4 +312,4 @@ async def start_web_dashboard(host: str = "0.0.0.0", port: int = 5000):
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()
-    print(f"\033[92m[+] Web Dashboard running on http://localhost:{port}\033[0m")
+    print(f"\033[92m[+] Web Dashboard running on http://{host}:{port}\033[0m")

@@ -44,8 +44,8 @@ import sys as _sys
 _sys.modules.setdefault("main", _sys.modules[__name__])
 
 # ==================== CONFIGURATION ====================
-WEB_HOST = "0.0.0.0"
-WEB_PORT = 8888
+WEB_HOST = os.environ.get("HOST", "0.0.0.0")
+WEB_PORT = int(os.environ.get("PORT", os.environ.get("WEB_PORT", 8888)))
 ACCOUNTS_FILE = "accounts.json"
 TOKEN_CACHE_FILE = "token_cache.json"
 DEVICES_FILE = "devices.json"
@@ -1986,7 +1986,7 @@ async def main():
 
     try:
         await start_web_dashboard(host=WEB_HOST, port=WEB_PORT)
-        print_success(f"Web Dashboard live at http://localhost:{WEB_PORT}")
+        print_success(f"Web Dashboard live on {WEB_HOST}:{WEB_PORT}")
     except Exception as e:
         print_error(f"Could not start web dashboard: {e}")
 
