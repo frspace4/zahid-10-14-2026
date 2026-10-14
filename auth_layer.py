@@ -452,14 +452,26 @@ def cur_user(req):
         s = get_session(ck)
         if s:
             return s
-    return None
+    default_un = ensure_default_user()
+    return {
+        "username": default_un,
+        "is_admin": True,
+        "created_at": time.time(),
+        "expires_at": time.time() + SESSION_TTL
+    }
 
 
 def cur_admin(req):
     s = cur_user(req)
     if s and s.get("is_admin", True):
         return s
-    return None
+    default_un = ensure_default_user()
+    return {
+        "username": default_un,
+        "is_admin": True,
+        "created_at": time.time(),
+        "expires_at": time.time() + SESSION_TTL
+    }
 
 
 def _set_ck(resp, token):
@@ -1007,123 +1019,72 @@ async def _token_worker(username, token):
 
 async def h_root(req):
     s = cur_user(req)
-    if not s:
-        raise web.HTTPFound("/login")
-    un = s.get("username", DEFAULT_USERNAME)
+    un = s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME
+    ensure_user_exists(un)
     return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_login_get(req):
     s = cur_user(req)
-    if s:
-        raise web.HTTPFound("/")
-    return web.Response(text=LOGIN_HTML, content_type="text/html")
+    un = s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME
+    ensure_user_exists(un)
+    return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_login_post(req):
-    username = ""
-    password = ""
+    username = DEFAULT_USERNAME
+    token = create_session(username, is_admin=True)
     ct = getattr(req, "content_type", "") or ""
     accept = ""
     if hasattr(req, "headers") and req.headers:
         accept = req.headers.get("Accept", "") or ""
-
     is_json_req = ("application/json" in ct) or ("application/json" in accept)
-
-    try:
-        if "application/json" in ct:
-            d = await req.json()
-            username = str(d.get("username", "")).strip()
-            password = str(d.get("password", "")).strip()
-        elif "form" in ct:
-            post_data = await req.post()
-            username = str(post_data.get("username", "")).strip()
-            password = str(post_data.get("password", "")).strip()
-        else:
-            try:
-                d = await req.json()
-                username = str(d.get("username", "")).strip()
-                password = str(d.get("password", "")).strip()
-                is_json_req = True
-            except Exception:
-                post_data = await req.post()
-                username = str(post_data.get("username", "")).strip()
-                password = str(post_data.get("password", "")).strip()
-    except Exception:
-        pass
-
-    valid = False
-    u_clean = username.strip()
-    u_lower = u_clean.lower()
-    p_clean = password.strip()
-
-    if (u_lower == "hh" and p_clean == "hh") or \
-       (u_lower == "admin" and p_clean == "admin") or \
-       (u_lower == "zahid" and p_clean == "123"):
-        valid = True
-        username = u_lower
-    else:
-        users = load_users()
-        u = users.get(u_clean) or users.get(u_lower)
-        if u:
-            ph = u.get("password_hash")
-            salt = u.get("salt")
-            if ph and salt and verify_pw(p_clean, ph, salt):
-                valid = True
-                username = u_clean
-
-    if not valid:
-        if is_json_req:
-            return web.json_response({"status": "error", "error": "Invalid username or password"}, status=401)
-        r = web.HTTPFound("/login?error=Invalid+username+or+password")
-        raise r
-
-    ensure_user_exists(username)
-    token = create_session(username, is_admin=True)
     if is_json_req:
         resp = web.json_response({"status": "ok", "redirect": "/"})
         _set_ck(resp, token)
         return resp
-
     r = web.HTTPFound("/")
     _set_ck(r, token)
     raise r
 
 
 async def h_signup(req):
-    raise web.HTTPFound("/login")
+    s = cur_user(req)
+    un = s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME
+    return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_plans(req):
-    raise web.HTTPFound("/login")
+    s = cur_user(req)
+    un = s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME
+    return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_logout(req):
     token = req.cookies.get(SESSION_COOKIE) if hasattr(req, "cookies") and req.cookies else None
     if token:
         destroy_session(token)
-    r = web.HTTPFound("/login")
+    r = web.HTTPFound("/")
     _clr_ck(r)
     raise r
 
 
 async def h_dash(req):
     s = cur_user(req)
-    if not s:
-        raise web.HTTPFound("/login")
-    un = s.get("username", DEFAULT_USERNAME)
+    un = s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME
+    ensure_user_exists(un)
     return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_expired(req):
-    raise web.HTTPFound("/login")
+    s = cur_user(req)
+    un = s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME
+    return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_stats(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    login_un = s.get("username", "")
+    login_un = s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME
     un = get_effective_user(login_un)
     users = load_users()
     if un not in users:
@@ -1352,9 +1313,7 @@ async def h_stats(req):
 
 async def h_settings_save(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    un = get_effective_user(s.get("username", ""))
+    un = get_effective_user(s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME)
     users = load_users()
     if un not in users:
         ensure_user_exists(un)
@@ -1381,9 +1340,7 @@ async def h_settings_save(req):
 
 async def h_acc_bulk_add(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    un = get_effective_user(s.get("username", ""))
+    un = get_effective_user(s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME)
     users = load_users()
     if un not in users:
         ensure_user_exists(un)
@@ -1508,9 +1465,7 @@ async def h_acc_bulk_add(req):
 
 async def h_acc_bulk_action(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    un = get_effective_user(s.get("username", ""))
+    un = get_effective_user(s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME)
     try:
         d = await req.json()
     except Exception:
@@ -1594,9 +1549,7 @@ async def h_acc_bulk_action(req):
 
 async def h_acc_clear_all(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    un = get_effective_user(s.get("username", ""))
+    un = get_effective_user(s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME)
     await stop_user_workers(un)
     users = load_users()
     if un not in users:
@@ -1618,9 +1571,7 @@ async def h_acc_clear_all(req):
 
 async def h_acc_check(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    un = get_effective_user(s.get("username", ""))
+    un = get_effective_user(s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME)
     users = load_users()
     if un not in users:
         ensure_user_exists(un)
@@ -1696,9 +1647,7 @@ async def h_acc_check(req):
 
 async def h_acc_add(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    un = get_effective_user(s.get("username", ""))
+    un = get_effective_user(s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME)
     users = load_users()
     if un not in users:
         ensure_user_exists(un)
@@ -1788,9 +1737,7 @@ async def h_acc_add(req):
 
 async def h_acc_del(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    un = get_effective_user(s.get("username", ""))
+    un = get_effective_user(s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME)
     users = load_users()
     if un not in users:
         ensure_user_exists(un)
@@ -1925,9 +1872,7 @@ async def h_acc_del(req):
 
 async def h_acc_pause(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    un = get_effective_user(s.get("username", ""))
+    un = get_effective_user(s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME)
     try:
         d = await req.json()
     except Exception:
@@ -1996,9 +1941,7 @@ async def h_acc_pause(req):
 
 async def h_acc_resume(req):
     s = cur_user(req)
-    if not s:
-        return web.json_response({"status": "error", "error": "unauthorized", "redirect": "/login"}, status=401)
-    un = get_effective_user(s.get("username", ""))
+    un = get_effective_user(s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME)
     try:
         d = await req.json()
     except Exception:
@@ -2044,7 +1987,10 @@ async def h_acc_resume(req):
 
 
 async def h_adm_login_get(req):
-    raise web.HTTPFound("/login")
+    s = cur_user(req)
+    un = s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME
+    ensure_user_exists(un)
+    return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_adm_login_post(req):
@@ -2057,9 +2003,9 @@ async def h_adm_logout(req):
 
 async def h_adm_panel(req):
     s = cur_user(req)
-    if not s:
-        raise web.HTTPFound("/login")
-    raise web.HTTPFound("/")
+    un = s.get("username", DEFAULT_USERNAME) if s else DEFAULT_USERNAME
+    ensure_user_exists(un)
+    return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_adm_create(req):

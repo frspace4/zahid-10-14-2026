@@ -192,12 +192,7 @@ async def handle_index(request: web.Request) -> web.Response:
 
 
 async def handle_login_page(request: web.Request) -> web.Response:
-    try:
-        from templates import LOGIN_HTML
-        content = LOGIN_HTML
-    except Exception:
-        content = "<h1>hh X LevelUp Login</h1>"
-    return web.Response(text=content, content_type="text/html", charset="utf-8")
+    return await handle_index(request)
 
 
 async def handle_get_stats(request: web.Request) -> web.Response:
