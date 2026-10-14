@@ -92,20 +92,33 @@ def compute_account_eta(acc: dict, settings: dict) -> tuple:
     if exp_target <= 0 and level_target <= 0:
         return None, "--", 0
 
-    if exp_target > 0:
-        remaining = max(0, exp_target - gained)
-        pct = min(100, int((gained / exp_target) * 100)) if exp_target > 0 else 100
-        if remaining == 0:
-            return 0, "DONE", 100
-    elif level_target > 0:
-        levels_needed = max(0, level_target - cur_level)
-        remaining = levels_needed * 8000
-        pct = min(100, int((cur_level / level_target) * 100)) if level_target > 0 else 100
-        if levels_needed == 0:
-            return 0, "DONE", 100
+    # If either target is reached, account is completed
+    is_done = False
+    if exp_target > 0 and gained >= exp_target:
+        is_done = True
+    if level_target > 0 and cur_level >= level_target:
+        is_done = True
+
+    if is_done:
+        return 0, "DONE", 100
+
+    # Compute remaining work and progress pct for each active target
+    exp_rem = max(0, exp_target - gained) if exp_target > 0 else None
+    exp_pct = min(100, int((gained / exp_target) * 100)) if exp_target > 0 else 0
+
+    lvl_needed = max(0, level_target - cur_level) if level_target > 0 else None
+    lvl_rem = (lvl_needed * 8000) if level_target > 0 else None
+    lvl_pct = min(100, int((cur_level / level_target) * 100)) if level_target > 0 else 0
+
+    if exp_rem is not None and lvl_rem is not None:
+        remaining = min(exp_rem, lvl_rem)
+        pct = max(exp_pct, lvl_pct)
+    elif exp_rem is not None:
+        remaining = exp_rem
+        pct = exp_pct
     else:
-        remaining = 0
-        pct = 0
+        remaining = lvl_rem
+        pct = lvl_pct
 
     created_at = acc.get("created_at") or (time.time() - 300)
     elapsed = max(60.0, time.time() - created_at)
@@ -131,7 +144,18 @@ def compute_total_eta(accounts: list, settings: dict) -> tuple:
             continue
         gained = int(a.get("gained_exp", 0) or 0)
         cur_level = int(a.get("level", 1) or 1)
-        if exp_target > 0:
+
+        # Skip accounts that reached either target
+        if exp_target > 0 and gained >= exp_target:
+            continue
+        if level_target > 0 and cur_level >= level_target:
+            continue
+
+        if exp_target > 0 and level_target > 0:
+            exp_rem = max(0, exp_target - gained)
+            lvl_rem = max(0, (level_target - cur_level) * 8000)
+            total_remaining += min(exp_rem, lvl_rem)
+        elif exp_target > 0:
             total_remaining += max(0, exp_target - gained)
         elif level_target > 0:
             total_remaining += max(0, (level_target - cur_level) * 8000)
@@ -677,8 +701,13 @@ async def _guest_worker(username, uid, password):
                         ds.bot_state.log(f"Account {uid_str} reached target! (Lvl {cur_level}, Gained {cur_gained})", "success", uid_str)
                         if target_delete:
                             USER_DELETED.setdefault(username, set()).add(uid_str)
+                            if acc_id:
+                                USER_DELETED[username].add(acc_id)
                             u["accounts"] = [a for a in u.get("accounts", []) if str(a.get("uid")) != uid_str]
                             save_users(users)
+                            ds.bot_state.accounts.pop(uid_str, None)
+                            if acc_id:
+                                ds.bot_state.accounts.pop(acc_id, None)
                         break
 
                     if uid_str in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
@@ -791,8 +820,13 @@ async def _token_worker(username, token):
                         ds.bot_state.log(f"Token {key} reached target! (Lvl {cur_level}, Gained {cur_gained})", "success", key)
                         if target_delete:
                             USER_DELETED.setdefault(username, set()).add(key)
+                            if acc_id:
+                                USER_DELETED[username].add(acc_id)
                             u["accounts"] = [a for a in u.get("accounts", []) if str(a.get("token", ""))[:20] != key]
                             save_users(users)
+                            ds.bot_state.accounts.pop(key, None)
+                            if acc_id:
+                                ds.bot_state.accounts.pop(acc_id, None)
                         break
 
                     if key in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
@@ -1173,7 +1207,9 @@ async def h_acc_bulk_add(req):
         deleted_set.discard(k)
         paused_set.discard(k)
         retries_map[k] = 0
-        status_map[k] = "WAITING"
+        workers = USER_WORKERS.get(un, {})
+        if k not in workers or workers[k].done():
+            status_map[k] = "WAITING"
         try:
             ds.cache_invalidate(k)
         except Exception:
@@ -1185,7 +1221,9 @@ async def h_acc_bulk_add(req):
         for a in accs:
             if a.get("type") == "guest" and str(a.get("uid")) == uid:
                 a["password"] = pw
-                a["status"] = "WAITING"
+                workers = USER_WORKERS.get(un, {})
+                if uid not in workers or workers[uid].done():
+                    a["status"] = "WAITING"
                 added += 1
                 return
         accs.append({
@@ -1209,7 +1247,9 @@ async def h_acc_bulk_add(req):
         _unmark_and_reset(tk)
         for a in accs:
             if a.get("type") == "token" and str(a.get("token")) == tk:
-                a["status"] = "WAITING"
+                workers = USER_WORKERS.get(un, {})
+                if prefix not in workers or workers[prefix].done():
+                    a["status"] = "WAITING"
                 added += 1
                 return
         accs.append({
@@ -1661,6 +1701,7 @@ async def h_acc_del(req):
         if k in bot_state.accounts:
             bot_state.accounts.pop(k, None)
 
+    asyncio.create_task(sync_user_queue(un))
     return web.json_response({"status": "ok", "removed": removed})
 
 
@@ -1731,6 +1772,7 @@ async def h_acc_pause(req):
         if k in bot_state.accounts:
             bot_state.accounts[k]["status"] = "PAUSED"
 
+    asyncio.create_task(sync_user_queue(un))
     return web.json_response({"status": "ok"})
 
 
