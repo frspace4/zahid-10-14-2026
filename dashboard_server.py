@@ -191,6 +191,15 @@ async def handle_index(request: web.Request) -> web.Response:
     return web.Response(text=content, content_type="text/html", charset="utf-8")
 
 
+async def handle_login_page(request: web.Request) -> web.Response:
+    try:
+        from templates import LOGIN_HTML
+        content = LOGIN_HTML
+    except Exception:
+        content = "<h1>hh X LevelUp Login</h1>"
+    return web.Response(text=content, content_type="text/html", charset="utf-8")
+
+
 async def handle_get_stats(request: web.Request) -> web.Response:
     accounts_data = list(bot_state.accounts.values())
     accounts_data.sort(key=lambda x: x.get("gained_exp", 0), reverse=True)
@@ -320,7 +329,7 @@ async def start_web_dashboard(host: str = None, port: int = None):
     app.router.add_get("/health", handle_health)
     app.router.add_get("/healthz", handle_health)
     app.router.add_get("/api/health", handle_health)
-    app.router.add_get("/login", handle_index)
+    app.router.add_get("/login", handle_login_page)
     app.router.add_get("/signup", handle_index)
     app.router.add_get("/plans", handle_index)
     app.router.add_get("/logout", handle_index)

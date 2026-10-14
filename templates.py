@@ -1081,11 +1081,12 @@ async function saveSettings(){
     }
   };
   try{
-    await fetch('/api/settings/save', {
+    const r = await fetch('/api/settings/save', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(payload)
     });
+    if(r.status === 401){ window.location.href = '/login'; return; }
     fetchStats();
   }catch(e){}
 }
@@ -1102,11 +1103,12 @@ async function bulkAction(act){
   }
   const uids = Array.from(selectedUids);
   try{
-    await fetch('/api/account/bulk-action', {
+    const r = await fetch('/api/account/bulk-action', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ action: act, uids: uids })
     });
+    if(r.status === 401){ window.location.href = '/login'; return; }
     if(act === 'delete') selectedUids.clear();
     fetchStats();
   }catch(e){}
@@ -1114,11 +1116,12 @@ async function bulkAction(act){
 
 async function singleAction(uid, act){
   try{
-    await fetch('/api/account/bulk-action', {
+    const r = await fetch('/api/account/bulk-action', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ action: act, uids: [String(uid)] })
     });
+    if(r.status === 401){ window.location.href = '/login'; return; }
     fetchStats();
   }catch(e){}
 }
@@ -1133,7 +1136,8 @@ async function confirmClearAll(){
   const ok = await showConfirm('Clear All IDs', 'Are you sure you want to DELETE ALL IDs? All accounts will be permanently removed.', 'Yes, Clear All', 'Cancel');
   if(!ok) return;
   try{
-    await fetch('/api/account/clear-all', {method: 'POST'});
+    const r = await fetch('/api/account/clear-all', {method: 'POST'});
+    if(r.status === 401){ window.location.href = '/login'; return; }
     selectedUids.clear();
     fetchStats();
   }catch(e){}
@@ -1172,6 +1176,7 @@ async function submitBulkAdd(){
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ text: txt })
     });
+    if(r.status === 401){ window.location.href = '/login'; return; }
     const d = await r.json();
     if(d.status === 'ok'){
       closeBulkAdd();
@@ -1387,14 +1392,14 @@ body::before {
     <div class="form-group">
       <label for="username">Username</label>
       <div class="inp-wrap">
-        <input type="text" id="username" name="username" placeholder="Enter username" autocomplete="username" required autofocus>
+        <input type="text" id="username" name="username" placeholder="Enter username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required autofocus>
       </div>
     </div>
 
     <div class="form-group">
       <label for="password">Password</label>
       <div class="inp-wrap">
-        <input type="password" id="password" name="password" placeholder="Enter password" autocomplete="current-password" required>
+        <input type="password" id="password" name="password" placeholder="Enter password" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" required>
       </div>
     </div>
 
@@ -1407,6 +1412,18 @@ body::before {
 </div>
 
 <script>
+window.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(window.location.search);
+  const msg = params.get('error');
+  if (msg) {
+    const err = document.getElementById('err');
+    if (err) {
+      err.textContent = msg;
+      err.classList.add('on');
+    }
+  }
+});
+
 async function handleLogin(e) {
   if (e) e.preventDefault();
   const u = document.getElementById('username').value.trim();

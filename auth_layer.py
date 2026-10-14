@@ -1023,8 +1023,14 @@ async def h_login_get(req):
 async def h_login_post(req):
     username = ""
     password = ""
+    ct = getattr(req, "content_type", "") or ""
+    accept = ""
+    if hasattr(req, "headers") and req.headers:
+        accept = req.headers.get("Accept", "") or ""
+
+    is_json_req = ("application/json" in ct) or ("application/json" in accept)
+
     try:
-        ct = getattr(req, "content_type", "") or ""
         if "application/json" in ct:
             d = await req.json()
             username = str(d.get("username", "")).strip()
@@ -1038,6 +1044,7 @@ async def h_login_post(req):
                 d = await req.json()
                 username = str(d.get("username", "")).strip()
                 password = str(d.get("password", "")).strip()
+                is_json_req = True
             except Exception:
                 post_data = await req.post()
                 username = str(post_data.get("username", "")).strip()
@@ -1046,27 +1053,41 @@ async def h_login_post(req):
         pass
 
     valid = False
-    if (username == "hh" and password == "hh") or \
-       (username == "admin" and password == "admin") or \
-       (username == "zahid" and password == "123"):
+    u_clean = username.strip()
+    u_lower = u_clean.lower()
+    p_clean = password.strip()
+
+    if (u_lower == "hh" and p_clean == "hh") or \
+       (u_lower == "admin" and p_clean == "admin") or \
+       (u_lower == "zahid" and p_clean == "123"):
         valid = True
+        username = u_lower
     else:
         users = load_users()
-        u = users.get(username)
+        u = users.get(u_clean) or users.get(u_lower)
         if u:
             ph = u.get("password_hash")
             salt = u.get("salt")
-            if ph and salt and verify_pw(password, ph, salt):
+            if ph and salt and verify_pw(p_clean, ph, salt):
                 valid = True
+                username = u_clean
 
     if not valid:
-        return web.json_response({"status": "error", "error": "Invalid username or password"}, status=401)
+        if is_json_req:
+            return web.json_response({"status": "error", "error": "Invalid username or password"}, status=401)
+        r = web.HTTPFound("/login?error=Invalid+username+or+password")
+        raise r
 
     ensure_user_exists(username)
     token = create_session(username, is_admin=True)
-    resp = web.json_response({"status": "ok", "redirect": "/"})
-    _set_ck(resp, token)
-    return resp
+    if is_json_req:
+        resp = web.json_response({"status": "ok", "redirect": "/"})
+        _set_ck(resp, token)
+        return resp
+
+    r = web.HTTPFound("/")
+    _set_ck(r, token)
+    raise r
 
 
 async def h_signup(req):
@@ -2249,6 +2270,8 @@ async def start_web_dashboard(host=None, port=None):
     app.router.add_get("/expired", h_expired)
     app.router.add_get("/admin", h_adm_login_get)
     app.router.add_get("/admin/", h_adm_login_get)
+    app.router.add_post("/admin", h_adm_login_post)
+    app.router.add_post("/admin/", h_adm_login_post)
 
     app.router.add_get("/api/stats", h_stats)
     app.router.add_post("/api/settings/save", h_settings_save)
