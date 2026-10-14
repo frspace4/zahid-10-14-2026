@@ -1,6 +1,0 @@
-[variables]
-NIXPACKS_PYTHON_VERSION = "3.11"
-PYTHONUNBUFFERED = "1"
-
-[start]
-cmd = "python -u app.py"

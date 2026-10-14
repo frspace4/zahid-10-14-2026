@@ -25,6 +25,11 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+try:
+    from google_play_scraper import app as play_scraper
+except Exception:
+    play_scraper = None
+
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 from protobuf_decoder.protobuf_decoder import Parser
@@ -456,9 +461,15 @@ async def aes_encrypt(payload, key, iv):
 
 
 async def get_playstore_version():
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, lambda: play_scraper('com.dts.freefireth', lang='hi', country='id'))
-    return result.get("version")
+    if play_scraper:
+        try:
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, lambda: play_scraper('com.dts.freefireth', lang='hi', country='id'))
+            if isinstance(result, dict) and result.get("version"):
+                return result.get("version")
+        except Exception:
+            pass
+    return "1.108.1"
 
 
 async def version_config():
@@ -1993,11 +2004,13 @@ async def main():
     print_info(f"  • Lvl {BR_MIN_LEVEL_HIGH}+      → BR")
     print_colored("=" * 60, Colors.CYAN)
 
+    host = os.environ.get("HOST", WEB_HOST)
+    port = get_env_port(WEB_PORT)
     try:
-        await start_web_dashboard(host=WEB_HOST, port=WEB_PORT)
-        print_success(f"Web Dashboard live on {WEB_HOST}:{WEB_PORT}")
+        await start_web_dashboard(host=host, port=port)
+        print_success(f"Web Dashboard live on {host}:{port}")
     except Exception as e:
-        print_error(f"FATAL: Could not start web dashboard on {WEB_HOST}:{WEB_PORT}: {e}")
+        print_error(f"FATAL: Could not start web dashboard on {host}:{port}: {e}")
         raise
 
     async def on_account_added_handler(data):
