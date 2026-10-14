@@ -58,6 +58,30 @@ DEFAULT_SETTINGS = {
     "game_mode": "AUTO"
 }
 
+
+def get_account_key(a: dict) -> str:
+    """Return the unique identifier string for an account (UID for guest, 20-char prefix for token)."""
+    if not isinstance(a, dict):
+        return ""
+    if a.get("uid") is not None and str(a.get("uid")).strip() != "":
+        return str(a["uid"]).strip()
+    if a.get("type") == "guest" and a.get("uid"):
+        return str(a["uid"]).strip()
+    tk = a.get("token") or ""
+    return str(tk).strip()[:20]
+
+
+def is_guest_account(a: dict) -> bool:
+    """Check if an account is a guest (UID/password) account."""
+    if not isinstance(a, dict):
+        return False
+    if a.get("type") == "guest":
+        return True
+    if a.get("type") == "token":
+        return False
+    return bool(a.get("uid") and ("password" in a or "pwd" in a or not a.get("token")))
+
+
 def get_user_settings(u: dict) -> dict:
     s = dict(DEFAULT_SETTINGS)
     if isinstance(u, dict):
@@ -180,7 +204,7 @@ async def sync_user_accounts_to_disk(username):
             return
         changed = False
         for saved in accounts:
-            saved_key = str(saved.get("uid")) if saved.get("type") == "guest" else str(saved.get("token", ""))[:20]
+            saved_key = get_account_key(saved)
             live = None
             for uid, acc in ds.bot_state.accounts.items():
                 if acc.get("_owner") != username:
@@ -190,10 +214,10 @@ async def sync_user_accounts_to_disk(username):
                     break
                 cred = ds.bot_state.account_credentials.get(str(uid))
                 if cred:
-                    if saved.get("type") == "guest" and str(cred.get("auth_uid")) == saved_key:
+                    if is_guest_account(saved) and str(cred.get("auth_uid")) == saved_key:
                         live = acc
                         break
-                    if saved.get("type") == "token" and str(cred.get("auth_token", ""))[:20] == saved_key:
+                    if not is_guest_account(saved) and str(cred.get("auth_token", ""))[:20] == saved_key:
                         live = acc
                         break
             if not live:
@@ -391,12 +415,12 @@ def ensure_default_user():
                 leg_accs = users[leg_un].get("accounts", [])
                 if leg_accs:
                     existing_keys = {
-                        str(a.get("uid") if a.get("type") == "guest" else a.get("token", "")[:20])
+                        get_account_key(a)
                         for a in u.get("accounts", [])
                     }
                     for a in leg_accs:
-                        k = str(a.get("uid") if a.get("type") == "guest" else a.get("token", "")[:20])
-                        if k not in existing_keys:
+                        k = get_account_key(a)
+                        if k and k not in existing_keys:
                             u.setdefault("accounts", []).append(a)
                             existing_keys.add(k)
                     users[leg_un]["accounts"] = []
@@ -493,10 +517,7 @@ def _patched_register(self, uid, nickname, region, level, exp, likes=0, **kwargs
         try:
             for un, udata in load_users().items():
                 for acc in udata.get("accounts", []):
-                    if acc.get("type") == "guest":
-                        acc_uid = str(acc.get("uid", ""))
-                    else:
-                        acc_uid = str(acc.get("token", ""))[:20]
+                    acc_uid = get_account_key(acc)
                     if acc_uid == uid_str:
                         owner = un
                         break
@@ -520,7 +541,7 @@ def _patched_register(self, uid, nickname, region, level, exp, likes=0, **kwargs
             u = users.get(owner)
             if u:
                 for saved in u.get("accounts", []):
-                    saved_key = str(saved.get("uid")) if saved.get("type") == "guest" else str(saved.get("token", ""))[:20]
+                    saved_key = get_account_key(saved)
                     if saved_key == uid_str:
                         saved_initial = saved.get("initial_exp")
                         saved_matches = saved.get("matches_played", 0)
@@ -557,7 +578,7 @@ def _patched_register(self, uid, nickname, region, level, exp, likes=0, **kwargs
             u = users.get(owner)
             if u:
                 for saved in u.get("accounts", []):
-                    saved_key = str(saved.get("uid")) if saved.get("type") == "guest" else str(saved.get("token", ""))[:20]
+                    saved_key = get_account_key(saved)
                     if saved_key == uid_str:
                         if saved.get("initial_exp") is None:
                             saved["initial_exp"] = acc["initial_exp"]
@@ -657,14 +678,14 @@ async def sync_user_queue(username: str):
                     t.cancel()
             workers.clear()
             for acc in u.get("accounts", []):
-                k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
+                k = get_account_key(acc)
                 if k and k not in deleted:
                     status_map[k] = "PAUSED"
             return
 
         # When all bots is ON, any account not individually in paused set should be un-paused
         for acc in u.get("accounts", []):
-            k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
+            k = get_account_key(acc)
             if k and k not in paused and status_map.get(k) == "PAUSED":
                 status_map[k] = "WAITING"
 
@@ -674,7 +695,7 @@ async def sync_user_queue(username: str):
         changed = False
 
         for acc in list(user_accounts):
-            k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
+            k = get_account_key(acc)
             if not k or k in deleted:
                 continue
 
@@ -685,10 +706,10 @@ async def sync_user_queue(username: str):
                     break
                 cred = ds.bot_state.account_credentials.get(str(uid_b))
                 if cred:
-                    if acc.get("type") == "guest" and str(cred.get("auth_uid")) == k:
+                    if is_guest_account(acc) and str(cred.get("auth_uid")) == k:
                         live_acc = b_acc
                         break
-                    if acc.get("type") == "token" and str(cred.get("auth_token", ""))[:20] == k:
+                    if not is_guest_account(acc) and str(cred.get("auth_token", ""))[:20] == k:
                         live_acc = b_acc
                         break
 
@@ -731,7 +752,7 @@ async def sync_user_queue(username: str):
         for acc in user_accounts:
             if len(desired_running_keys) >= active_slots:
                 break
-            k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
+            k = get_account_key(acc)
             if not k or k in deleted or k in paused:
                 continue
             cur_st = status_map.get(k, "WAITING")
@@ -750,12 +771,13 @@ async def sync_user_queue(username: str):
 
         # Spawn workers for desired accounts that do not have active workers yet
         for acc in user_accounts:
-            k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
+            k = get_account_key(acc)
             if k in desired_running_keys:
                 if k not in workers or workers[k].done():
                     status_map[k] = "RUNNING"
-                    if acc.get("type") == "guest":
-                        t = asyncio.create_task(_guest_worker(username, acc["uid"], acc["password"]))
+                    if is_guest_account(acc):
+                        pw = acc.get("password") or acc.get("pwd", "")
+                        t = asyncio.create_task(_guest_worker(username, acc["uid"], pw))
                     else:
                         t = asyncio.create_task(_token_worker(username, acc["token"]))
                     workers[k] = t
@@ -763,7 +785,7 @@ async def sync_user_queue(username: str):
 
         # Set status of all other accounts
         for acc in user_accounts:
-            k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
+            k = get_account_key(acc)
             if not k or k in deleted:
                 continue
             if k in paused:
@@ -1183,8 +1205,7 @@ async def h_stats(req):
 
     # Include saved accounts not yet active in bot_state
     for acc in u.get("accounts", []):
-        acc_type = acc.get("type")
-        key = acc.get("uid") if acc_type == "guest" else acc.get("token", "")[:20]
+        key = get_account_key(acc)
         if not key:
             continue
         key_str = str(key)
@@ -1380,7 +1401,7 @@ async def h_acc_bulk_add(req):
         nonlocal added
         _unmark_and_reset(uid)
         for a in accs:
-            if a.get("type") == "guest" and str(a.get("uid")) == uid:
+            if is_guest_account(a) and get_account_key(a) == uid:
                 a["password"] = pw
                 workers = USER_WORKERS.get(un, {})
                 if uid not in workers or workers[uid].done():
@@ -1407,7 +1428,7 @@ async def h_acc_bulk_add(req):
         _unmark_and_reset(prefix)
         _unmark_and_reset(tk)
         for a in accs:
-            if a.get("type") == "token" and str(a.get("token")) == tk:
+            if not is_guest_account(a) and (get_account_key(a) == prefix or str(a.get("token", "")) == tk):
                 workers = USER_WORKERS.get(un, {})
                 if prefix not in workers or workers[prefix].done():
                     a["status"] = "WAITING"
@@ -1514,8 +1535,8 @@ async def h_acc_bulk_action(req):
             if t and not t.done():
                 t.cancel()
         accs = u.get("accounts", [])
-        to_move = [a for a in accs if str(a.get("uid") if a.get("type") == "guest" else a.get("token", "")[:20]) in uids]
-        remaining = [a for a in accs if str(a.get("uid") if a.get("type") == "guest" else a.get("token", "")[:20]) not in uids]
+        to_move = [a for a in accs if get_account_key(a) in uids]
+        remaining = [a for a in accs if get_account_key(a) not in uids]
         u["accounts"] = remaining + to_move
         save_users(users)
     elif action == "move_running":
@@ -1523,8 +1544,8 @@ async def h_acc_bulk_action(req):
             paused.discard(uid)
             status_map[uid] = "RUNNING"
         accs = u.get("accounts", [])
-        to_move = [a for a in accs if str(a.get("uid") if a.get("type") == "guest" else a.get("token", "")[:20]) in uids]
-        remaining = [a for a in accs if str(a.get("uid") if a.get("type") == "guest" else a.get("token", "")[:20]) not in uids]
+        to_move = [a for a in accs if get_account_key(a) in uids]
+        remaining = [a for a in accs if get_account_key(a) not in uids]
         u["accounts"] = to_move + remaining
         save_users(users)
     elif action == "delete":
@@ -1540,7 +1561,7 @@ async def h_acc_bulk_action(req):
             except Exception:
                 pass
             ds.bot_state.accounts.pop(uid, None)
-        u["accounts"] = [a for a in u.get("accounts", []) if str(a.get("uid") if a.get("type") == "guest" else a.get("token", "")[:20]) not in deleted]
+        u["accounts"] = [a for a in u.get("accounts", []) if get_account_key(a) not in deleted]
         save_users(users)
 
     asyncio.create_task(sync_user_queue(un))
@@ -1559,13 +1580,27 @@ async def h_acc_clear_all(req):
     if u:
         u["accounts"] = []
         save_users(users)
+    USER_STATUS.setdefault(un, {}).clear()
     USER_STATUS.pop(un, None)
+    USER_PAUSED.setdefault(un, set()).clear()
     USER_PAUSED.pop(un, None)
+    USER_DELETED.setdefault(un, set()).clear()
     USER_DELETED.pop(un, None)
+    USER_RETRIES.setdefault(un, {}).clear()
     USER_RETRIES.pop(un, None)
-    for k in list(ds.bot_state.accounts.keys()):
-        if ds.bot_state.accounts[k].get("_owner") == un:
-            ds.bot_state.accounts.pop(k, None)
+    default_un = ensure_default_user()
+    if un == default_un:
+        ds.bot_state.accounts.clear()
+        if os.path.exists("accounts.json"):
+            try:
+                with open("accounts.json", "w", encoding="utf-8") as f:
+                    json.dump([], f, indent=2)
+            except Exception:
+                pass
+    else:
+        for k in list(ds.bot_state.accounts.keys()):
+            if ds.bot_state.accounts[k].get("_owner") in (un, None):
+                ds.bot_state.accounts.pop(k, None)
     return web.json_response({"status": "ok"})
 
 
@@ -1710,7 +1745,7 @@ async def h_acc_add(req):
         if not uid or not pw:
             return web.json_response({"status": "error", "error": "UID And Password Required"})
         for a in accs:
-            if a.get("type") == "guest" and str(a.get("uid")) == uid:
+            if is_guest_account(a) and get_account_key(a) == uid:
                 return web.json_response({"status": "error", "error": "UID Already Added"})
         cleared = _clear_all_keys_for(uid)
         accs.append({"type": "guest", "uid": uid, "password": pw, "created_at": time.time()})
@@ -1720,7 +1755,7 @@ async def h_acc_add(req):
         if not tk:
             return web.json_response({"status": "error", "error": "Token Required"})
         for a in accs:
-            if a.get("type") == "token" and a.get("token") == tk:
+            if not is_guest_account(a) and (get_account_key(a) == tk[:20] or a.get("token") == tk):
                 return web.json_response({"status": "error", "error": "Token Already Added"})
         cleared = _clear_all_keys_for(tk)
         accs.append({"type": "token", "token": tk, "created_at": time.time()})
@@ -1821,7 +1856,7 @@ async def h_acc_del(req):
                     t.cancel()
                     try:
                         await asyncio.wait_for(t, timeout=3)
-                    except Exception:
+                    except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                         pass
 
     for k in keys_to_kill:
@@ -1833,22 +1868,21 @@ async def h_acc_del(req):
     removed = False
     accs_list = list(u.get("accounts", []))
     for acc in list(accs_list):
-        acc_type = acc.get("type")
-        acc_uid = str(acc.get("uid", ""))
-        acc_token_prefix = str(acc.get("token", ""))[:20]
+        acc_key = get_account_key(acc)
+        is_guest = is_guest_account(acc)
 
         match = False
-        if acc_type == "guest":
-            if acc_uid == uid or (real_uid and acc_uid == real_uid):
+        if is_guest:
+            if acc_key == uid or (real_uid and acc_key == real_uid):
                 match = True
-        elif acc_type == "token":
-            if acc_token_prefix == uid[:20] or (real_token_prefix and acc_token_prefix == real_token_prefix):
+        else:
+            if acc_key == uid[:20] or (real_token_prefix and acc_key == real_token_prefix):
                 match = True
 
         if match:
             accs_list.remove(acc)
             removed = True
-            print(f"[api] Removed from users.json: type={acc_type} uid={acc_uid} token={acc_token_prefix}", flush=True)
+            print(f"[api] Removed from users.json: guest={is_guest} key={acc_key}", flush=True)
             break
 
     u["accounts"] = accs_list
@@ -1928,7 +1962,7 @@ async def h_acc_pause(req):
                     t.cancel()
                     try:
                         await asyncio.wait_for(t, timeout=3)
-                    except Exception:
+                    except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
                         pass
 
     for k in keys_to_kill:
@@ -2205,17 +2239,31 @@ async def start_web_dashboard(host=None, port=None):
     app.router.add_get("/healthz", h_health)
     app.router.add_get("/api/health", h_health)
     app.router.add_get("/login", h_login_get)
+    app.router.add_get("/login/", h_login_get)
     app.router.add_post("/login", h_login_post)
+    app.router.add_post("/login/", h_login_post)
     app.router.add_get("/signup", h_signup)
+    app.router.add_get("/signup/", h_signup)
     app.router.add_post("/signup", h_login_post)
+    app.router.add_post("/signup/", h_login_post)
     app.router.add_get("/plans", h_plans)
+    app.router.add_get("/plans/", h_plans)
     app.router.add_post("/plans", h_login_post)
+    app.router.add_post("/plans/", h_login_post)
     app.router.add_get("/logout", h_logout)
+    app.router.add_get("/logout/", h_logout)
     app.router.add_post("/logout", h_logout)
+    app.router.add_post("/logout/", h_logout)
     app.router.add_get("/dashboard", h_dash)
+    app.router.add_get("/dashboard/", h_dash)
     app.router.add_get("/expired", h_expired)
+    app.router.add_get("/expired/", h_expired)
     app.router.add_get("/admin", h_adm_login_get)
     app.router.add_get("/admin/", h_adm_login_get)
+    app.router.add_get("/admin/panel", h_adm_panel)
+    app.router.add_get("/admin/panel/", h_adm_panel)
+    app.router.add_get("/admin/login", h_adm_login_get)
+    app.router.add_get("/admin/login/", h_adm_login_get)
     app.router.add_post("/admin", h_adm_login_post)
     app.router.add_post("/admin/", h_adm_login_post)
 
@@ -2242,6 +2290,14 @@ async def start_web_dashboard(host=None, port=None):
     app.router.add_post("/api/admin/delete-user", h_adm_del)
     app.router.add_post("/api/admin/reset-password", h_adm_reset_pw)
 
+    # Universal fallback for any non-API web URL: immediately serve full dashboard
+    async def h_fallback_dashboard(req):
+        if req.path.startswith("/api/"):
+            return web.json_response({"status": "error", "error": "Endpoint not found"}, status=404)
+        return await h_root(req)
+
+    app.router.add_get("/{tail:.*}", h_fallback_dashboard)
+
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
@@ -2263,4 +2319,13 @@ async def start_web_dashboard(host=None, port=None):
         print(f"[auth] Startup user initialization error: {e}", flush=True)
 
 
-__all__ = ["bot_state", "start_web_dashboard"]
+__all__ = [
+    "bot_state",
+    "start_web_dashboard",
+    "ensure_default_user",
+    "sync_user_queue",
+    "load_users",
+    "save_users",
+    "get_account_key",
+    "is_guest_account",
+]

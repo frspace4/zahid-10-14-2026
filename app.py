@@ -47,7 +47,15 @@ import StartMatch_pb2
 import sys as _sys
 _sys.modules.setdefault("main", _sys.modules[__name__])
 
-from auth_layer import bot_state, start_web_dashboard
+from auth_layer import (
+    bot_state,
+    start_web_dashboard,
+    ensure_default_user,
+    sync_user_queue,
+    load_users,
+    save_users,
+    get_account_key,
+)
 
 # ==================== CONFIGURATION ====================
 def get_env_port(default: int = 8080) -> int:
@@ -2014,15 +2022,33 @@ async def main():
         raise
 
     async def on_account_added_handler(data):
-        if "token" in data and data["token"]:
-            t = str(data["token"]).strip()
-            task = asyncio.create_task(account_loop_token(t))
-            bot_state.account_workers[t[:10]] = task
-        elif "uid" in data and "password" in data:
-            u = str(data["uid"]).strip()
-            p = str(data["password"]).strip()
-            task = asyncio.create_task(account_loop_guest(u, p))
-            bot_state.account_workers[u] = task
+        try:
+            default_un = ensure_default_user()
+            users = load_users()
+            u = users.setdefault(default_un, {})
+            u_accs = u.setdefault("accounts", [])
+            existing_keys = {get_account_key(a) for a in u_accs}
+            k = get_account_key(data)
+            if k and k not in existing_keys:
+                if data.get("uid") and data.get("password"):
+                    u_accs.append({
+                        "type": "guest",
+                        "uid": str(data["uid"]).strip(),
+                        "password": str(data["password"]).strip(),
+                        "created_at": time.time(),
+                        "status": "WAITING"
+                    })
+                elif data.get("token"):
+                    u_accs.append({
+                        "type": "token",
+                        "token": str(data["token"]).strip(),
+                        "created_at": time.time(),
+                        "status": "WAITING"
+                    })
+                save_users(users)
+            await sync_user_queue(default_un)
+        except Exception as ex:
+            print_error(f"on_account_added_handler error: {ex}")
 
     async def on_refresh_account_handler(uid):
         await refresh_account_profile(uid)
@@ -2032,18 +2058,42 @@ async def main():
 
     accounts = load_accounts()
 
-    if not accounts:
+    if accounts:
+        try:
+            default_un = ensure_default_user()
+            users = load_users()
+            u = users.setdefault(default_un, {})
+            u_accs = u.setdefault("accounts", [])
+            existing_keys = {get_account_key(a) for a in u_accs}
+            added = False
+            for acc in accounts:
+                k = get_account_key(acc)
+                if k and k not in existing_keys:
+                    if acc.get("uid") and acc.get("password"):
+                        u_accs.append({
+                            "type": "guest",
+                            "uid": str(acc["uid"]).strip(),
+                            "password": str(acc["password"]).strip(),
+                            "created_at": time.time(),
+                            "status": "WAITING"
+                        })
+                    elif acc.get("token"):
+                        u_accs.append({
+                            "type": "token",
+                            "token": str(acc["token"]).strip(),
+                            "created_at": time.time(),
+                            "status": "WAITING"
+                        })
+                    existing_keys.add(k)
+                    added = True
+            if added:
+                save_users(users)
+            asyncio.create_task(sync_user_queue(default_un))
+        except Exception as ex:
+            print_warning(f"Could not synchronize accounts.json into queue: {ex}")
+    else:
         print_warning(f"No accounts found in {ACCOUNTS_FILE}! Add accounts from Web Dashboard.")
         print_warning(f"Open: http://localhost:{WEB_PORT}")
-
-    for acc in accounts:
-        if "token" in acc and acc["token"]:
-            t = asyncio.create_task(account_loop_token(acc["token"]))
-            bot_state.account_workers[acc["token"][:10]] = t
-        elif "uid" in acc and "password" in acc and acc["uid"]:
-            u = str(acc["uid"])
-            t = asyncio.create_task(account_loop_guest(u, acc["password"]))
-            bot_state.account_workers[u] = t
 
     stop_event = asyncio.Event()
 

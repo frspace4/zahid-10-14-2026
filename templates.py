@@ -886,16 +886,16 @@ function updateControlsUI(st){
   }
 
   // Days
-  if(st.days) document.getElementById('inp-days').value = st.days;
+  if(st.days && document.activeElement !== document.getElementById('inp-days')) document.getElementById('inp-days').value = st.days;
 
   // Active Slots
-  if(st.active_slots) document.getElementById('inp-slots').value = st.active_slots;
+  if(st.active_slots && document.activeElement !== document.getElementById('inp-slots')) document.getElementById('inp-slots').value = st.active_slots;
 
   // Retry
-  if(st.login_retry) document.getElementById('inp-retry').value = st.login_retry;
+  if(st.login_retry && document.activeElement !== document.getElementById('inp-retry')) document.getElementById('inp-retry').value = st.login_retry;
 
   // Daily Limit
-  if(st.daily_limit !== undefined) document.getElementById('inp-daily-limit').value = st.daily_limit;
+  if(st.daily_limit !== undefined && document.activeElement !== document.getElementById('inp-daily-limit')) document.getElementById('inp-daily-limit').value = st.daily_limit;
 
   // All Bots
   const allBtn = document.getElementById('btn-all-bots');
@@ -921,7 +921,7 @@ function updateControlsUI(st){
 
   // EXP Limit
   if(st.exp_limit !== undefined){
-    document.getElementById('inp-exp-limit').value = st.exp_limit;
+    if(document.activeElement !== document.getElementById('inp-exp-limit')) document.getElementById('inp-exp-limit').value = st.exp_limit;
     const expHint = document.getElementById('hint-exp-limit');
     if(parseInt(st.exp_limit) > 0) expHint.textContent = 'Limit: ' + parseInt(st.exp_limit).toLocaleString() + ' EXP (Target Complete)';
     else expHint.textContent = 'No limit (accounts are never auto-deleted)';
@@ -929,7 +929,7 @@ function updateControlsUI(st){
 
   // Level Limit
   if(st.level_limit !== undefined){
-    document.getElementById('inp-level-limit').value = st.level_limit;
+    if(document.activeElement !== document.getElementById('inp-level-limit')) document.getElementById('inp-level-limit').value = st.level_limit;
     const lvlHint = document.getElementById('hint-level-limit');
     if(parseInt(st.level_limit) > 0) lvlHint.textContent = 'Target: Level ' + st.level_limit;
     else lvlHint.textContent = 'No limit (accounts are never auto-deleted)';
@@ -983,8 +983,6 @@ async function fetchStats(){
     if(r.status === 401){ return; }
     const d = await r.json();
 
-    if(d.expired){ return; }
-
     // Detect EXP diff for the green + number badge
     const nowTs = Date.now();
     (d.accounts || []).forEach(acc => {
@@ -1022,12 +1020,14 @@ async function fetchStats(){
 function toggleDailyAutoplay(){
   cachedSettings.daily_autoplay = !cachedSettings.daily_autoplay;
   updateControlsUI(cachedSettings);
+  saveSettings();
 }
 function adjustSlots(delta){
   const inp = document.getElementById('inp-slots');
   let val = Math.max(1, (parseInt(inp.value) || 1) + delta);
   inp.value = val;
   cachedSettings.active_slots = val;
+  saveSettings();
 }
 function toggleAllBots(){
   cachedSettings.all_bots = !(cachedSettings.all_bots !== false);
@@ -1122,6 +1122,10 @@ async function singleAction(uid, act){
       body: JSON.stringify({ action: act, uids: [String(uid)] })
     });
     if(r.status === 401){ return; }
+    if(act === 'delete'){
+      selectedUids.delete(String(uid));
+      updateSelectionUI();
+    }
     fetchStats();
   }catch(e){}
 }
@@ -1188,9 +1192,10 @@ async function submitBulkAdd(){
   }catch(ex){
     err.textContent = 'Network error while adding accounts';
     err.classList.add('on');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Import Accounts';
   }
-  btn.disabled = false;
-  btn.textContent = 'Import Accounts';
 }
 
 document.getElementById('rf').addEventListener('click', async () => {
