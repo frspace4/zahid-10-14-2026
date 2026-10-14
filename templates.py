@@ -770,6 +770,7 @@ function getVisibleAccounts(){
 
 function renderCards(){
   const grid = document.getElementById('grid');
+  if(cachedAccounts.length === 0) selectedUids.clear();
   const visible = getVisibleAccounts();
 
   if(visible.length === 0){
@@ -827,7 +828,7 @@ function renderCards(){
     // Top Row
     html += '<div class="card-top">';
     html += '<div class="card-top-left">';
-    html += '<input type="checkbox" class="card-chk" ' + (isSelected ? 'checked' : '') + ' onchange="toggleSelect(\'' + uid + '\', this.checked)">';
+    html += '<input type="checkbox" class="card-chk" ' + (isSelected ? 'checked' : '') + ' onchange="toggleSelect(&quot;' + uid + '&quot;, this.checked)">';
     html += '<span class="status-pill ' + stCls + '"><span class="dot"></span>' + status + '</span>';
     html += '</div>';
     html += '<div class="top-right" style="display:flex;gap:4px">';
@@ -862,10 +863,10 @@ function renderCards(){
 
     // Action buttons
     html += '<div class="card-actions">';
-    html += '<button type="button" class="c-btn" title="Pause / Resume" onclick="singleAction(\'' + uid + '\', \'' + (isPaused ? 'resume' : 'pause') + '\')">' + (isPaused ? '▶ Run' : '⏸ Pause') + '</button>';
-    html += '<button type="button" class="c-btn" title="Relogin" onclick="singleAction(\'' + uid + '\', \'relogin\')">🔄 Relogin</button>';
-    html += '<button type="button" class="c-btn" title="Toggle Queue" onclick="singleAction(\'' + uid + '\', \'' + (status === 'RUNNING' ? 'move_waiting' : 'move_running') + '\')">' + (status === 'RUNNING' ? '⏳ Wait' : '▶ Slot') + '</button>';
-    html += '<button type="button" class="c-btn del" title="Delete" onclick="deleteSingleAccount(\'' + uid + '\')">🗑</button>';
+    html += '<button type="button" class="c-btn" title="Pause / Resume" onclick="singleAction(&quot;' + uid + '&quot;, &quot;' + (isPaused ? 'resume' : 'pause') + '&quot;)">' + (isPaused ? '▶ Run' : '⏸ Pause') + '</button>';
+    html += '<button type="button" class="c-btn" title="Relogin" onclick="singleAction(&quot;' + uid + '&quot;, &quot;relogin&quot;)">🔄 Relogin</button>';
+    html += '<button type="button" class="c-btn" title="Toggle Queue" onclick="singleAction(&quot;' + uid + '&quot;, &quot;' + (status === 'RUNNING' ? 'move_waiting' : 'move_running') + '&quot;)">' + (status === 'RUNNING' ? '⏳ Wait' : '▶ Slot') + '</button>';
+    html += '<button type="button" class="c-btn del" title="Delete" onclick="deleteSingleAccount(&quot;' + uid + '&quot;)">🗑</button>';
     html += '</div>';
 
     html += '</div>';
@@ -1165,7 +1166,7 @@ function closeBulkAdd(){
 }
 function updateBulkCount(){
   const txt = document.getElementById('bulk-text').value.trim();
-  const count = txt ? txt.split('\n').filter(l => l.trim().length > 0 && !l.trim().startsWith('#')).length : 0;
+  const count = txt ? txt.split(String.fromCharCode(10)).filter(l => l.trim().length > 0 && !l.trim().startsWith('#')).length : 0;
   document.getElementById('bulk-count-label').textContent = count + ' accounts detected';
 }
 async function submitBulkAdd(){
