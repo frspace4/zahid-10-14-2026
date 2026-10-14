@@ -1000,19 +1000,19 @@ body{background:radial-gradient(ellipse at top,#080e1a 0%,#000 60%);padding-bott
 .c-stat:last-child{border-right:none}
 .c-stat .l{font-size:7px;color:var(--mut);font-family:'Orbitron',sans-serif;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:2px}
 .c-stat .v{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:800;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.c-stat .v.g{color:#22c55e}
+.c-stat .v.g{color:#22c55e;white-space:normal;overflow:visible;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:2px}
 
 /* Green + Number gain badge */
 .gain-pop-green{
-  display:inline-block;
+  display:inline-flex;
+  align-items:center;
   color:#22c55e;
-  background:rgba(34,197,94,0.16);
-  border:1px solid rgba(34,197,94,0.45);
+  background:rgba(34,197,94,0.18);
+  border:1px solid rgba(34,197,94,0.5);
   padding:1px 5px;
   border-radius:5px;
-  font-size:10px;
+  font-size:9px;
   font-weight:800;
-  margin-left:3px;
   animation:popGreen 1.2s infinite alternate;
 }
 @keyframes popGreen{
@@ -1446,7 +1446,7 @@ function renderCards(){
     // Stats Grid
     html += '<div class="card-stats">';
     html += '<div class="c-stat"><div class="l">EXP</div><div class="v">' + curExp.toLocaleString() + '</div></div>';
-    html += '<div class="c-stat"><div class="l">Gained</div><div class="v g">+' + gained.toLocaleString() + (gainBadgeHtml ? ' ' + gainBadgeHtml : '') + '</div></div>';
+    html += '<div class="c-stat"><div class="l">Gained</div><div class="v g"><span>' + gained.toLocaleString() + '</span>' + (gainBadgeHtml ? ' ' + gainBadgeHtml : '') + '</div></div>';
     html += '<div class="c-stat"><div class="l">Matches</div><div class="v">' + matches + '</div></div>';
     html += '</div>';
 
