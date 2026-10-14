@@ -773,7 +773,11 @@ function renderCards(){
   const visible = getVisibleAccounts();
 
   if(visible.length === 0){
-    grid.innerHTML = '<div class="empty-box"><p>No accounts match the "' + currentFilter.toUpperCase() + '" filter.</p></div>';
+    if(currentFilter === 'all'){
+      grid.innerHTML = '<div class="empty-box"><p style="font-size:13px;color:#94a3b8;margin-bottom:12px">No accounts added yet.</p><button type="button" class="btn-add-accs" onclick="openBulkAdd()" style="padding:10px 24px;font-size:13px">+ Add Accounts (Unlimited)</button></div>';
+    } else {
+      grid.innerHTML = '<div class="empty-box"><p>No accounts match the "' + currentFilter.toUpperCase() + '" filter.</p></div>';
+    }
     updateSelectionUI();
     return;
   }
@@ -1151,7 +1155,9 @@ async function confirmClearAll(){
 function openBulkAdd(){
   document.getElementById('modal-bulk-add').classList.add('on');
   document.getElementById('bulk-err').classList.remove('on');
-  document.getElementById('bulk-text').value = '';
+  const txt = document.getElementById('bulk-text');
+  txt.value = '';
+  setTimeout(() => txt.focus(), 50);
   updateBulkCount();
 }
 function closeBulkAdd(){
@@ -1159,7 +1165,7 @@ function closeBulkAdd(){
 }
 function updateBulkCount(){
   const txt = document.getElementById('bulk-text').value.trim();
-  const count = txt ? txt.split('\n').filter(l => l.trim().length > 0).length : 0;
+  const count = txt ? txt.split('\n').filter(l => l.trim().length > 0 && !l.trim().startsWith('#')).length : 0;
   document.getElementById('bulk-count-label').textContent = count + ' accounts detected';
 }
 async function submitBulkAdd(){
@@ -1180,17 +1186,16 @@ async function submitBulkAdd(){
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ text: txt })
     });
-    if(r.status === 401){ return; }
-    const d = await r.json();
-    if(d.status === 'ok'){
+    const d = await r.json().catch(() => null);
+    if(r.ok && d && d.status === 'ok'){
       closeBulkAdd();
-      fetchStats();
+      await fetchStats();
     } else {
-      err.textContent = d.error || 'Failed to add accounts';
+      err.textContent = (d && d.error) || ('Server returned HTTP ' + r.status);
       err.classList.add('on');
     }
   }catch(ex){
-    err.textContent = 'Network error while adding accounts';
+    err.textContent = 'Network error while adding accounts: ' + ex.message;
     err.classList.add('on');
   }finally{
     btn.disabled = false;

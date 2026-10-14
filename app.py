@@ -512,13 +512,17 @@ async def get_access_token(uid, password):
         "Accept-Encoding": "gzip, deflate, br",
         "Connection": "close"
     }
+    try:
+        uid_val = int(str(uid).strip())
+    except (ValueError, TypeError):
+        uid_val = str(uid).strip()
     payload = {
         "client_id": 100067,
         "client_secret": "2ee44819e9b4598845141067b281621874d0d5d7af9d8f7e00c1e54715b7d1e3",
         "client_type": 2,
         "password": password,
         "response_type": "token",
-        "uid": int(uid)
+        "uid": uid_val
     }
     for attempt in range(5):
         try:
@@ -710,8 +714,16 @@ async def send_getlogin(data, base_url, token, release_version):
 
 
 async def build_tcp_startup_packet(account_id, token, server_time, key, iv, region="BD", typ='OnLine'):
-    uid_hex = f"{int(account_id):016x}"
-    timestamp_hex = f"{int(server_time):08x}"
+    try:
+        acc_int = int(str(account_id).strip())
+    except (ValueError, TypeError):
+        acc_int = 0
+    uid_hex = f"{acc_int:016x}"
+    try:
+        st_int = int(str(server_time).strip())
+    except (ValueError, TypeError):
+        st_int = int(time.time())
+    timestamp_hex = f"{st_int:08x}"
     encode_token = token.encode()
     encrypted_packet = (await aes_encrypt(encode_token, key, iv)).hex()
     encrypted_packet_length = f"{len(encrypted_packet) // 2:08x}"
