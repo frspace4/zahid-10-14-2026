@@ -48,14 +48,15 @@ USER_QUEUE_LOCK: Dict[str, asyncio.Lock] = {}
 DEFAULT_SETTINGS = {
     "daily_autoplay": False,
     "days": 1,
-    "active_slots": 10,
+    "active_slots": 1,
     "login_retry": 3,
     "daily_limit": 60000,
     "all_bots": True,
     "target_delete": False,
     "exp_limit": 0,
     "level_limit": 21,
-    "game_mode": "AUTO"
+    "game_mode": "AUTO",
+    "safety_mode": "SAFE"
 }
 
 
@@ -93,6 +94,8 @@ def get_user_settings(u: dict) -> dict:
                 s["active_slots"] = int(u.get("slots"))
             except Exception:
                 pass
+    if s.get("safety_mode", "SAFE") == "SAFE":
+        s["active_slots"] = 1
     return s
 
 def format_duration(seconds: int) -> str:
@@ -662,7 +665,8 @@ async def sync_user_queue(username: str):
             return
 
         settings = get_user_settings(u)
-        active_slots = max(1, int(settings.get("active_slots", 10)))
+        safety_mode = settings.get("safety_mode", "SAFE")
+        active_slots = 1 if safety_mode == "SAFE" else max(1, int(settings.get("active_slots", 10)))
         all_bots = bool(settings.get("all_bots", True))
         target_delete = bool(settings.get("target_delete", False))
         exp_limit = int(settings.get("exp_limit", 0))
@@ -672,6 +676,7 @@ async def sync_user_queue(username: str):
 
         try:
             bot_state.game_mode = game_mode
+            bot_state.safety_mode = safety_mode
         except Exception:
             pass
 
@@ -1385,11 +1390,18 @@ async def h_settings_save(req):
     new_settings = d.get("settings", {})
     cur_settings = get_user_settings(u)
     cur_settings.update(new_settings)
+    if cur_settings.get("safety_mode", "SAFE") == "SAFE":
+        cur_settings["active_slots"] = 1
     u["settings"] = cur_settings
     if "active_slots" in cur_settings:
         u["slots"] = cur_settings["active_slots"]
     users[un] = u
     save_users(users)
+    try:
+        if "safety_mode" in cur_settings:
+            bot_state.safety_mode = cur_settings["safety_mode"]
+    except Exception:
+        pass
     asyncio.create_task(sync_user_queue(un))
     return web.json_response({"status": "ok", "settings": cur_settings})
 

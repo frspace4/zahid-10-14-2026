@@ -25,6 +25,10 @@ class BotState:
         self.paused: set = set()
         self.writers: Dict[str, Any] = {}
         self.game_mode: str = "AUTO"
+        self.safety_mode: str = "SAFE"
+
+    def set_safety_mode(self, mode: str):
+        self.safety_mode = "RISK" if str(mode).upper() == "RISK" else "SAFE"
 
     def log(self, message: str, level: str = "info", uid: Optional[str] = None):
         entry = {

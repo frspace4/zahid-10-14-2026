@@ -615,6 +615,15 @@ body{background:radial-gradient(ellipse at top,#080e1a 0%,#000 60%);padding-bott
           </div>
         </div>
 
+        <div class="ctrl-row">
+          <label>Mode Strategy</label>
+          <div class="mode-selector">
+            <button type="button" class="mode-btn on" id="safety-btn-safe" onclick="setSafetyMode('SAFE')">SAFE MODE</button>
+            <button type="button" class="mode-btn" id="safety-btn-risk" onclick="setSafetyMode('RISK')">RISK MODE</button>
+          </div>
+        </div>
+        <div class="sub-desc" id="hint-safety-mode" style="margin-top:-6px; margin-bottom:10px; color:#00ff88; font-size:11px;">Safe Mode: 1 Active Slot, wait for 1st match to finish before 2nd starts</div>
+
         <div class="total-eta-box">
           <span class="lbl">TOTAL ETA:</span>
           <span class="val" id="val-total-eta">--</span>
@@ -945,6 +954,25 @@ function updateControlsUI(st){
   document.getElementById('mode-btn-auto').classList.toggle('on', curMode === 'AUTO');
   document.getElementById('mode-btn-br').classList.toggle('on', curMode === 'ONLY_BR');
   document.getElementById('mode-btn-cs').classList.toggle('on', curMode === 'ONLY_CS');
+
+  // Safety Strategy
+  const curSafety = (st.safety_mode || 'SAFE').toUpperCase();
+  const safeBtn = document.getElementById('safety-btn-safe');
+  const riskBtn = document.getElementById('safety-btn-risk');
+  const safetyHint = document.getElementById('hint-safety-mode');
+  if(safeBtn && riskBtn){
+    safeBtn.classList.toggle('on', curSafety === 'SAFE');
+    riskBtn.classList.toggle('on', curSafety === 'RISK');
+  }
+  if(safetyHint){
+    if(curSafety === 'SAFE'){
+      safetyHint.textContent = 'Safe Mode: 1 Active Slot, wait for 1st match to finish before 2nd starts';
+      safetyHint.style.color = '#00ff88';
+    } else {
+      safetyHint.textContent = 'Risk Mode: Multi-match stacking, fast match loop every 3s';
+      safetyHint.style.color = '#ffaa00';
+    }
+  }
 }
 
 function updateCountsUI(counts){
@@ -1028,8 +1056,14 @@ function toggleDailyAutoplay(){
   saveSettings();
 }
 function adjustSlots(delta){
+  const curSafety = (cachedSettings.safety_mode || 'SAFE').toUpperCase();
+  if(curSafety === 'SAFE' && delta > 0){
+    alert('Safe Mode is active (limited to 1 active slot). Switch to Risk Mode to increase active slots.');
+    return;
+  }
   const inp = document.getElementById('inp-slots');
   let val = Math.max(1, (parseInt(inp.value) || 1) + delta);
+  if(curSafety === 'SAFE') val = 1;
   inp.value = val;
   cachedSettings.active_slots = val;
   saveSettings();
@@ -1063,26 +1097,44 @@ function setGameMode(mode){
   updateControlsUI(cachedSettings);
   saveSettings();
 }
+function setSafetyMode(mode){
+  cachedSettings.safety_mode = mode;
+  if(mode === 'SAFE'){
+    cachedSettings.active_slots = 1;
+    const inp = document.getElementById('inp-slots');
+    if(inp) inp.value = 1;
+  }
+  updateControlsUI(cachedSettings);
+  saveSettings();
+}
 
 async function saveSettings(){
+  const curSafety = (cachedSettings.safety_mode || 'SAFE').toUpperCase();
   const rawDays = document.getElementById('inp-days').value.trim();
   const rawSlots = document.getElementById('inp-slots').value.trim();
   const rawRetry = document.getElementById('inp-retry').value.trim();
   const rawDaily = document.getElementById('inp-daily-limit').value.trim();
   const rawExp = document.getElementById('inp-exp-limit').value.trim();
   const rawLvl = document.getElementById('inp-level-limit').value.trim();
+  let slotsVal = rawSlots === '' ? 1 : Math.max(1, parseInt(rawSlots) || 1);
+  if(curSafety === 'SAFE'){
+    slotsVal = 1;
+    const inp = document.getElementById('inp-slots');
+    if(inp) inp.value = 1;
+  }
   const payload = {
     settings: {
       daily_autoplay: cachedSettings.daily_autoplay || false,
       days: rawDays === '' ? 1 : Math.max(1, parseInt(rawDays) || 1),
-      active_slots: rawSlots === '' ? 10 : Math.max(1, parseInt(rawSlots) || 10),
+      active_slots: slotsVal,
       login_retry: rawRetry === '' ? 3 : Math.max(1, parseInt(rawRetry) || 3),
       daily_limit: rawDaily === '' ? 60000 : Math.max(0, parseInt(rawDaily) || 0),
       all_bots: cachedSettings.all_bots !== false,
       target_delete: cachedSettings.target_delete || false,
       exp_limit: rawExp === '' ? 0 : Math.max(0, parseInt(rawExp) || 0),
       level_limit: rawLvl === '' ? 21 : Math.max(0, parseInt(rawLvl) || 0),
-      game_mode: cachedSettings.game_mode || 'AUTO'
+      game_mode: cachedSettings.game_mode || 'AUTO',
+      safety_mode: curSafety
     }
   };
   try{

@@ -1510,6 +1510,16 @@ async def functional_worker(addrs, starter_packet, account_region, client_versio
                                     await writer.wait_closed()
                                 except Exception:
                                     pass
+
+                                is_safe_mode = getattr(bot_state, "safety_mode", "SAFE") == "SAFE"
+                                if is_safe_mode:
+                                    print_info(f"[SAFE MODE] UID {uid_str}: Match #{match_index} running... Waiting until match finishes before starting next match.")
+                                    try:
+                                        await new_match
+                                    except Exception as ex:
+                                        print_error(f"[SAFE MODE] Match #{match_index} wait error: {ex}")
+                                    print_success(f"[SAFE MODE] UID {uid_str}: Match #{match_index} completed. Cooldown {NEW_MATCH_DELAY}s...")
+
                                 print_info(f"[OFFLINE] {NEW_MATCH_DELAY}s offline → reload token → new StartMatch")
                                 await asyncio.sleep(NEW_MATCH_DELAY)
                                 reconnects = 0
