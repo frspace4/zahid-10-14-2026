@@ -1105,11 +1105,9 @@ body{background:radial-gradient(ellipse at top,#080e1a 0%,#000 60%);padding-bott
     <!-- User Meta & Quick Actions -->
     <div class="user-meta">
       <div class="mi"><span class="l">User</span><span class="v" id="ui-u">{{USERNAME}}</span></div>
-      <div class="mi"><span class="l">Time</span><span class="v" id="ui-t">--</span></div>
+      <div class="mi"><span class="l">Time</span><span class="v" id="ui-t">Unlimited</span></div>
       <div class="act">
         <button class="bs bf" id="rf" title="Refresh">__ICON_REFRESH__</button>
-        <a class="bs bw" href="/plans">Buy</a>
-        <a class="bs bg" href="/logout">Logout</a>
       </div>
     </div>
   </div>
@@ -1562,7 +1560,7 @@ function updateSystemUI(sys, pingMs){
 }
 
 function fmtLeft(s){
-  if(s <= 0) return 'Expired';
+  if(!s || s >= 100000000) return 'Unlimited';
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   if(h > 0) return h + 'h ' + m + 'm';
@@ -1574,10 +1572,10 @@ async function fetchStats(){
   try{
     const r = await fetch('/api/stats');
     const pingMs = Math.round(performance.now() - t0);
-    if(r.status === 401){ window.location.href = '/login'; return; }
+    if(r.status === 401){ return; }
     const d = await r.json();
 
-    if(d.expired){ window.location.href = '/expired'; return; }
+    if(d.expired){ return; }
 
     // Detect EXP diff for the green + number badge
     const nowTs = Date.now();
@@ -1797,6 +1795,8 @@ setInterval(fetchStats, 3000);
 """
 
 DASHBOARD_HTML = DASHBOARD_HTML.replace("__ICON_REFRESH__", _icon("refresh", "currentColor", 14))
+HOME_HTML = DASHBOARD_HTML
+PLANS_HTML = DASHBOARD_HTML
 # ==================== ADMIN LOGIN ====================
 ADMIN_LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en">

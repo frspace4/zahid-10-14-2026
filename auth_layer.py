@@ -335,15 +335,93 @@ def destroy_session(token):
     save_sessions(s)
 
 
+DEFAULT_USERNAME = "admin"
+
+
+def ensure_default_user():
+    users = load_users()
+    now = time.time()
+    perpetual_time = now + 100 * 365 * 86400
+
+    target_un = None
+    if DEFAULT_USERNAME in users:
+        target_un = DEFAULT_USERNAME
+    elif "zahid" in users:
+        target_un = "zahid"
+    else:
+        for un in users.keys():
+            if not un.startswith("test_"):
+                target_un = un
+                break
+
+    if not target_un:
+        target_un = DEFAULT_USERNAME
+        users[target_un] = {
+            "password_hash": "",
+            "salt": "",
+            "slots": 10,
+            "plan_hours": 999999,
+            "created_at": now,
+            "expires_at": perpetual_time,
+            "accounts": [],
+            "_expired_flag": False,
+            "settings": dict(DEFAULT_SETTINGS),
+        }
+        save_users(users)
+    else:
+        u = users[target_un]
+        changed = False
+        if u.get("expires_at", 0) < now + 30 * 86400:
+            u["expires_at"] = perpetual_time
+            changed = True
+        if u.get("_expired_flag", False):
+            u["_expired_flag"] = False
+            changed = True
+        if "settings" not in u:
+            u["settings"] = dict(DEFAULT_SETTINGS)
+            changed = True
+        if changed:
+            save_users(users)
+    return target_un
+
+
+def ensure_user_exists(un=None):
+    if not un:
+        return ensure_default_user()
+    users = load_users()
+    now = time.time()
+    perpetual_time = now + 100 * 365 * 86400
+    if un not in users:
+        users[un] = {
+            "password_hash": "",
+            "salt": "",
+            "slots": 10,
+            "plan_hours": 999999,
+            "created_at": now,
+            "expires_at": perpetual_time,
+            "accounts": [],
+            "_expired_flag": False,
+            "settings": dict(DEFAULT_SETTINGS),
+        }
+        save_users(users)
+    return un
+
+
 def cur_user(req):
-    return get_session(req.cookies.get(SESSION_COOKIE))
+    ck = None
+    if hasattr(req, "cookies") and req.cookies:
+        ck = req.cookies.get(SESSION_COOKIE)
+    if ck:
+        s = get_session(ck)
+        if s:
+            return s
+    un = ensure_default_user()
+    return {"username": un, "is_admin": False, "is_default": True}
 
 
 def cur_admin(req):
-    s = cur_user(req)
-    if s and s.get("is_admin"):
-        return s
-    return None
+    un = ensure_default_user()
+    return {"username": un, "is_admin": True}
 
 
 def _set_ck(resp, token):
@@ -455,23 +533,32 @@ async def stop_user_workers(username):
     workers = USER_WORKERS.pop(username, {})
     tasks = list(workers.values())
     for t in tasks:
-        if not t.done():
-            t.cancel()
+        try:
+            if not t.done():
+                t.cancel()
+        except (RuntimeError, Exception):
+            pass
     if tasks:
-        await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        except (RuntimeError, Exception):
+            pass
 
     for key in list(bot_state.account_workers.keys()):
         if str(key).startswith(username + "::"):
             t = bot_state.account_workers.pop(key, None)
-            if t and not t.done():
-                t.cancel()
             if t:
                 try:
+                    if not t.done():
+                        t.cancel()
                     await asyncio.wait_for(t, timeout=3)
-                except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                except (asyncio.CancelledError, asyncio.TimeoutError, RuntimeError, Exception):
                     pass
 
-    await asyncio.sleep(0.2)
+    try:
+        await asyncio.sleep(0.2)
+    except (RuntimeError, Exception):
+        pass
 
 
 async def sync_user_queue(username: str):
@@ -880,96 +967,59 @@ async def _token_worker(username, token):
 
 
 async def h_root(req):
-    return web.Response(text=HOME_HTML, content_type="text/html")
+    s = cur_user(req)
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
+    return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_login_get(req):
-    s = cur_user(req)
-    if s and not s.get("is_admin"):
-        raise web.HTTPFound("/dashboard")
-    return web.Response(text=LOGIN_HTML, content_type="text/html")
+    raise web.HTTPFound("/")
 
 
 async def h_login_post(req):
-    try:
-        d = await req.json()
-    except Exception:
-        return web.json_response({"status": "error", "error": "Invalid JSON"})
-    u = (d.get("username") or "").strip()
-    p = d.get("password") or ""
-    if not u or not p:
-        return web.json_response({"status": "error", "error": "Missing Credentials"})
-    users = load_users()
-    x = users.get(u)
-    if not x:
-        print(f"[auth] Login FAILED (no user) username={u}", flush=True)
-        return web.json_response({"status": "error", "error": "Invalid Credentials"})
-    if not verify_pw(p, x.get("password_hash", ""), x.get("salt", "")):
-        print(f"[auth] Login FAILED (bad pass) username={u}", flush=True)
-        return web.json_response({"status": "error", "error": "Invalid Credentials"})
-    token = create_session(u, False)
-    print(f"[auth] Login OK user={u}", flush=True)
-    resp = web.json_response({"status": "ok", "redirect": "/dashboard"})
-    _set_ck(resp, token)
-    if time.time() < x.get("expires_at", 0):
-        asyncio.create_task(start_user_workers(u))
-    return resp
+    return web.json_response({"status": "ok", "redirect": "/"})
 
 
 async def h_signup(req):
-    raise web.HTTPFound("/plans")
+    raise web.HTTPFound("/")
 
 
 async def h_plans(req):
-    s = cur_user(req)
-    un = s["username"] if s else "{{USERNAME}}"
-    return web.Response(text=PLANS_HTML.replace("{{USERNAME}}", un), content_type="text/html")
+    raise web.HTTPFound("/")
 
 
 async def h_logout(req):
-    token = req.cookies.get(SESSION_COOKIE)
+    token = req.cookies.get(SESSION_COOKIE) if hasattr(req, "cookies") and req.cookies else None
     if token:
-        s = get_session(token)
-        if s and not s.get("is_admin"):
-            print(f"[auth] Logout user={s['username']} (syncing state, workers kept alive)", flush=True)
-            await sync_user_accounts_to_disk(s["username"])
         destroy_session(token)
-    r = web.HTTPFound("/login")
+    r = web.HTTPFound("/")
     _clr_ck(r)
     raise r
 
 
 async def h_dash(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        raise web.HTTPFound("/login")
-    users = load_users()
-    x = users.get(s["username"])
-    if not x:
-        raise web.HTTPFound("/logout")
-    if time.time() >= x.get("expires_at", 0):
-        raise web.HTTPFound("/expired")
-    return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", s["username"]), content_type="text/html")
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
+    return web.Response(text=DASHBOARD_HTML.replace("{{USERNAME}}", un), content_type="text/html")
 
 
 async def h_expired(req):
-    s = cur_user(req)
-    if not s or s.get("is_admin"):
-        raise web.HTTPFound("/login")
-    return web.Response(text=EXPIRED_HTML, content_type="text/html")
+    raise web.HTTPFound("/")
 
 
 async def h_stats(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     users = load_users()
+    if un not in users:
+        ensure_user_exists(un)
+        users = load_users()
     u = users.get(un, {})
+    default_un = ensure_default_user()
     now = time.time()
-    exp_at = u.get("expires_at", 0)
-    expired = now >= exp_at
-    left = max(0, int(exp_at - now))
+    exp_at = u.get("expires_at", now + 86400 * 36500)
+    expired = False if un == default_un else (now >= exp_at)
+    left = 999999999 if un == default_un else max(0, int(exp_at - now))
     paused = USER_PAUSED.get(un, set())
     deleted = USER_DELETED.get(un, set())
     status_map = USER_STATUS.setdefault(un, {})
@@ -1172,10 +1222,11 @@ async def h_stats(req):
 
 async def h_settings_save(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"status": "error", "error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     users = load_users()
+    if un not in users:
+        ensure_user_exists(un)
+        users = load_users()
     u = users.get(un)
     if not u:
         return web.json_response({"status": "error", "error": "User missing"}, status=404)
@@ -1198,10 +1249,11 @@ async def h_settings_save(req):
 
 async def h_acc_bulk_add(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"status": "error", "error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     users = load_users()
+    if un not in users:
+        ensure_user_exists(un)
+        users = load_users()
     u = users.get(un)
     if not u:
         return web.json_response({"status": "error", "error": "User missing"}, status=404)
@@ -1322,9 +1374,7 @@ async def h_acc_bulk_add(req):
 
 async def h_acc_bulk_action(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"status": "error", "error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     try:
         d = await req.json()
     except Exception:
@@ -1334,6 +1384,9 @@ async def h_acc_bulk_action(req):
     uids = [str(x).strip() for x in d.get("uids", []) if str(x).strip()]
 
     users = load_users()
+    if un not in users:
+        ensure_user_exists(un)
+        users = load_users()
     u = users.get(un)
     if not u:
         return web.json_response({"status": "error", "error": "User missing"}, status=404)
@@ -1405,11 +1458,12 @@ async def h_acc_bulk_action(req):
 
 async def h_acc_clear_all(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"status": "error", "error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     await stop_user_workers(un)
     users = load_users()
+    if un not in users:
+        ensure_user_exists(un)
+        users = load_users()
     u = users.get(un)
     if u:
         u["accounts"] = []
@@ -1426,14 +1480,16 @@ async def h_acc_clear_all(req):
 
 async def h_acc_check(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"status": "error", "error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     users = load_users()
+    if un not in users:
+        ensure_user_exists(un)
+        users = load_users()
     u = users.get(un)
     if not u:
         return web.json_response({"status": "error", "error": "User Missing"})
-    if time.time() >= u.get("expires_at", 0):
+    default_un = ensure_default_user()
+    if un != default_un and time.time() >= u.get("expires_at", 0):
         return web.json_response({"status": "error", "error": "Plan Expired"})
     try:
         d = await req.json()
@@ -1500,14 +1556,16 @@ async def h_acc_check(req):
 
 async def h_acc_add(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"status": "error", "error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     users = load_users()
+    if un not in users:
+        ensure_user_exists(un)
+        users = load_users()
     u = users.get(un)
     if not u:
         return web.json_response({"status": "error", "error": "User Missing"})
-    if time.time() >= u.get("expires_at", 0):
+    default_un = ensure_default_user()
+    if un != default_un and time.time() >= u.get("expires_at", 0):
         return web.json_response({"status": "error", "error": "Plan Expired"})
     try:
         d = await req.json()
@@ -1591,10 +1649,11 @@ async def h_acc_add(req):
 
 async def h_acc_del(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"status": "error", "error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     users = load_users()
+    if un not in users:
+        ensure_user_exists(un)
+        users = load_users()
     u = users.get(un)
     if not u:
         return web.json_response({"status": "error", "error": "User Missing"})
@@ -1725,9 +1784,7 @@ async def h_acc_del(req):
 
 async def h_acc_pause(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"status": "error", "error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     try:
         d = await req.json()
     except Exception:
@@ -1796,9 +1853,7 @@ async def h_acc_pause(req):
 
 async def h_acc_resume(req):
     s = cur_user(req)
-    if not s or s.get("is_admin"):
-        return web.json_response({"status": "error", "error": "unauthorized"}, status=401)
-    un = s["username"]
+    un = s["username"] if (s and "username" in s) else ensure_default_user()
     try:
         d = await req.json()
     except Exception:
@@ -1843,42 +1898,19 @@ async def h_acc_resume(req):
 
 
 async def h_adm_login_get(req):
-    s = cur_user(req)
-    if s and s.get("is_admin"):
-        raise web.HTTPFound(ADMIN_PATH + "/panel")
-    return web.Response(text=ADMIN_LOGIN_HTML, content_type="text/html")
+    raise web.HTTPFound("/")
 
 
 async def h_adm_login_post(req):
-    try:
-        d = await req.json()
-    except Exception:
-        return web.json_response({"status": "error", "error": "Invalid JSON"})
-    u = (d.get("username") or "").strip()
-    p = d.get("password") or ""
-    if u == ADMIN_USERNAME and p == ADMIN_PASSWORD:
-        token = create_session(u, True)
-        print(f"[auth] Admin login OK", flush=True)
-        r = web.json_response({"status": "ok", "redirect": ADMIN_PATH + "/panel"})
-        _set_ck(r, token)
-        return r
-    print(f"[auth] Admin login FAILED username={u}", flush=True)
-    return web.json_response({"status": "error", "error": "Access Denied"})
+    return web.json_response({"status": "ok", "redirect": "/"})
 
 
 async def h_adm_logout(req):
-    token = req.cookies.get(SESSION_COOKIE)
-    if token:
-        destroy_session(token)
-    r = web.HTTPFound(ADMIN_PATH)
-    _clr_ck(r)
-    raise r
+    raise web.HTTPFound("/")
 
 
 async def h_adm_panel(req):
-    if not cur_admin(req):
-        raise web.HTTPFound(ADMIN_PATH)
-    return web.Response(text=ADMIN_PANEL_HTML, content_type="text/html")
+    raise web.HTTPFound("/")
 
 
 async def h_adm_create(req):
@@ -2031,7 +2063,10 @@ async def expiry_watcher():
             users = load_users()
             now = time.time()
             changed = False
+            default_un = ensure_default_user()
             for un, u in users.items():
+                if un == default_un:
+                    continue
                 exp = now >= u.get("expires_at", 0)
                 was = u.get("_expired_flag", False)
                 if exp and not was:
@@ -2056,8 +2091,9 @@ async def queue_watcher():
         try:
             users = load_users()
             now = time.time()
+            default_un = ensure_default_user()
             for un, u in users.items():
-                if now < u.get("expires_at", 0):
+                if un == default_un or now < u.get("expires_at", 0):
                     await sync_user_queue(un)
         except Exception:
             pass
@@ -2139,24 +2175,11 @@ async def start_web_dashboard(host=None, port=None):
     asyncio.create_task(queue_watcher())
 
     try:
+        default_un = ensure_default_user()
         users = load_users()
-        if not users:
-            ph, salt = hash_pw("123")
-            users["zahid"] = {
-                "password_hash": ph,
-                "salt": salt,
-                "slots": 10,
-                "expires_at": time.time() + 365 * 24 * 3600,
-                "created_at": time.time(),
-                "accounts": [],
-                "settings": dict(DEFAULT_SETTINGS)
-            }
-            save_users(users)
-            print("[auth] Auto-created default user: zahid / 123 (10 slots)", flush=True)
-
         now = time.time()
         for un, u in users.items():
-            if now < u.get("expires_at", 0):
+            if un == default_un or now < u.get("expires_at", 0):
                 asyncio.create_task(start_user_workers(un))
     except Exception as e:
         print(f"[auth] Startup user initialization error: {e}", flush=True)
