@@ -482,6 +482,12 @@ async def sync_user_queue(username: str):
                     status_map[k] = "PAUSED"
             return
 
+        # When all bots is ON, any account not individually in paused set should be un-paused
+        for acc in u.get("accounts", []):
+            k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
+            if k and k not in paused and status_map.get(k) == "PAUSED":
+                status_map[k] = "WAITING"
+
         # Check target completions
         accounts_to_keep = []
         user_accounts = u.get("accounts", [])
@@ -540,40 +546,42 @@ async def sync_user_queue(username: str):
             if workers[k].done():
                 del workers[k]
 
-        # Stop workers exceeding active_slots
-        running_keys = [k for k, t in workers.items() if not t.done()]
-        while len(running_keys) > active_slots:
-            k_stop = running_keys.pop()
-            t = workers.pop(k_stop, None)
-            if t and not t.done():
-                t.cancel()
-            status_map[k_stop] = "WAITING"
+        # Determine the target running accounts based on priority order in user_accounts
+        desired_running_keys = []
+        for acc in user_accounts:
+            if len(desired_running_keys) >= active_slots:
+                break
+            k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
+            if not k or k in deleted or k in paused:
+                continue
+            cur_st = status_map.get(k, "WAITING")
+            if cur_st in ("DONE", "ERROR", "OFFLINE"):
+                continue
+            desired_running_keys.append(k)
 
-        # Spawn workers for waiting accounts up to active_slots
-        free_slots = active_slots - len(workers)
-        if free_slots > 0:
-            for acc in user_accounts:
-                if free_slots <= 0:
-                    break
-                k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
-                if not k or k in deleted or k in paused:
-                    continue
-                cur_st = status_map.get(k, "WAITING")
-                if cur_st in ("DONE", "ERROR", "PAUSED", "OFFLINE"):
-                    continue
-                if k in workers and not workers[k].done():
-                    continue
+        # Stop workers for accounts that should not be running (e.g. slots reduced or reordered)
+        for k in list(workers.keys()):
+            if k not in desired_running_keys:
+                t = workers.pop(k, None)
+                if t and not t.done():
+                    t.cancel()
+                if status_map.get(k) not in ("DONE", "ERROR", "PAUSED", "OFFLINE"):
+                    status_map[k] = "WAITING"
 
-                status_map[k] = "RUNNING"
-                if acc.get("type") == "guest":
-                    t = asyncio.create_task(_guest_worker(username, acc["uid"], acc["password"]))
-                else:
-                    t = asyncio.create_task(_token_worker(username, acc["token"]))
-                workers[k] = t
-                bot_state.account_workers[username + "::" + k] = t
-                free_slots -= 1
+        # Spawn workers for desired accounts that do not have active workers yet
+        for acc in user_accounts:
+            k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
+            if k in desired_running_keys:
+                if k not in workers or workers[k].done():
+                    status_map[k] = "RUNNING"
+                    if acc.get("type") == "guest":
+                        t = asyncio.create_task(_guest_worker(username, acc["uid"], acc["password"]))
+                    else:
+                        t = asyncio.create_task(_token_worker(username, acc["token"]))
+                    workers[k] = t
+                    bot_state.account_workers[username + "::" + k] = t
 
-        # Set status of all other accounts appropriately
+        # Set status of all other accounts
         for acc in user_accounts:
             k = str(acc.get("uid") if acc.get("type") == "guest" else acc.get("token", "")[:20])
             if not k or k in deleted:
@@ -596,75 +604,113 @@ async def _guest_worker(username, uid, password):
     except Exception:
         import app as m
     uid_str = str(uid)
-    while True:
-        try:
-            if uid_str in USER_DELETED.get(username, set()) or uid_str in USER_PAUSED.get(username, set()):
-                break
-            status = USER_STATUS.get(username, {}).get(uid_str, "RUNNING")
-            if status != "RUNNING":
-                break
-
-            users = load_users()
-            u = users.get(username, {})
-            settings = get_user_settings(u)
-            max_retries = int(settings.get("login_retry", 3))
-
-            cv = _CURRENT_OWNER.set(username)
+    try:
+        while True:
             try:
-                print(f"[auth] Guest login starting user={username} uid={uid_str}", flush=True)
-                ad = None
+                if uid_str in USER_DELETED.get(username, set()) or uid_str in USER_PAUSED.get(username, set()):
+                    break
+                status = USER_STATUS.get(username, {}).get(uid_str, "RUNNING")
+                if status != "RUNNING":
+                    break
+
+                users = load_users()
+                u = users.get(username, {})
+                settings = get_user_settings(u)
+                max_retries = int(settings.get("login_retry", 3))
+
+                cv = _CURRENT_OWNER.set(username)
                 try:
-                    ad = await m.process_account_uid_pass(uid_str, password)
-                except Exception as ex:
-                    print(f"[auth] Login exception for {uid_str}: {ex}", flush=True)
+                    print(f"[auth] Guest login starting user={username} uid={uid_str}", flush=True)
+                    ad = None
+                    try:
+                        ad = await m.process_account_uid_pass(uid_str, password)
+                    except Exception as ex:
+                        print(f"[auth] Login exception for {uid_str}: {ex}", flush=True)
 
-                if not ad:
-                    retries = USER_RETRIES.setdefault(username, {}).get(uid_str, 0) + 1
-                    USER_RETRIES[username][uid_str] = retries
-                    print(f"[auth] Guest login FAILED user={username} uid={uid_str} ({retries}/{max_retries})", flush=True)
-                    if retries >= max_retries:
-                        USER_STATUS.setdefault(username, {})[uid_str] = "ERROR"
-                        bot_state.log(f"Account {uid_str} failed login {retries} times. Marked ERROR.", "error", uid_str)
-                        asyncio.create_task(sync_user_queue(username))
+                    if not ad:
+                        retries = USER_RETRIES.setdefault(username, {}).get(uid_str, 0) + 1
+                        USER_RETRIES[username][uid_str] = retries
+                        print(f"[auth] Guest login FAILED user={username} uid={uid_str} ({retries}/{max_retries})", flush=True)
+                        if retries >= max_retries:
+                            USER_STATUS.setdefault(username, {})[uid_str] = "ERROR"
+                            bot_state.log(f"Account {uid_str} failed login {retries} times. Marked ERROR.", "error", uid_str)
+                            break
+                        await asyncio.sleep(8)
+                        continue
+
+                    USER_RETRIES.setdefault(username, {})[uid_str] = 0
+                    USER_STATUS.setdefault(username, {})[uid_str] = "RUNNING"
+                    acc_id = str(ad.get("account_id", uid_str))
+
+                    if uid_str in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
                         break
-                    await asyncio.sleep(8)
-                    continue
+                    if uid_str in USER_PAUSED.get(username, set()) or acc_id in USER_PAUSED.get(username, set()):
+                        break
 
-                USER_RETRIES.setdefault(username, {})[uid_str] = 0
-                USER_STATUS.setdefault(username, {})[uid_str] = "RUNNING"
-                acc_id = str(ad.get("account_id", uid_str))
+                    # Propagate mode setting
+                    mode_pref = settings.get("game_mode", "AUTO")
+                    if mode_pref == "ONLY_BR":
+                        bot_state.set_account_mode(acc_id, "BR")
+                    elif mode_pref == "ONLY_CS":
+                        bot_state.set_account_mode(acc_id, "LW")
 
-                if uid_str in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
-                    break
-                if uid_str in USER_PAUSED.get(username, set()) or acc_id in USER_PAUSED.get(username, set()):
-                    break
+                    print(f"[auth] Guest login OK user={username} uid={uid_str} acc_id={acc_id}", flush=True)
+                    await m.run_account_worker(ad, uid_str)
 
-                # Propagate mode setting
-                mode_pref = settings.get("game_mode", "AUTO")
-                if mode_pref == "ONLY_BR":
-                    bot_state.set_account_mode(acc_id, "BR")
-                elif mode_pref == "ONLY_CS":
-                    bot_state.set_account_mode(acc_id, "LW")
+                    # Check target completion after match
+                    users = load_users()
+                    u = users.get(username, {})
+                    settings = get_user_settings(u)
+                    exp_limit = int(settings.get("exp_limit", 0))
+                    level_limit = int(settings.get("level_limit", 0))
+                    target_delete = bool(settings.get("target_delete", False))
+                    live_acc = ds.bot_state.accounts.get(uid_str) or ds.bot_state.accounts.get(acc_id)
+                    cur_gained = live_acc.get("gained_exp", 0) if live_acc else 0
+                    cur_level = live_acc.get("level", 1) if live_acc else 1
+                    is_done = False
+                    if exp_limit > 0 and cur_gained >= exp_limit:
+                        is_done = True
+                    if level_limit > 0 and cur_level >= level_limit:
+                        is_done = True
+                    if is_done:
+                        USER_STATUS.setdefault(username, {})[uid_str] = "DONE"
+                        ds.bot_state.log(f"Account {uid_str} reached target! (Lvl {cur_level}, Gained {cur_gained})", "success", uid_str)
+                        if target_delete:
+                            USER_DELETED.setdefault(username, set()).add(uid_str)
+                            u["accounts"] = [a for a in u.get("accounts", []) if str(a.get("uid")) != uid_str]
+                            save_users(users)
+                        break
 
-                print(f"[auth] Guest login OK user={username} uid={uid_str} acc_id={acc_id}", flush=True)
-                await m.run_account_worker(ad, uid_str)
+                    if uid_str in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
+                        break
+                    if uid_str in USER_PAUSED.get(username, set()) or acc_id in USER_PAUSED.get(username, set()):
+                        break
+                    if USER_STATUS.get(username, {}).get(uid_str) in ("DONE", "ERROR", "WAITING", "PAUSED", "OFFLINE"):
+                        break
 
-                if uid_str in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
-                    break
-                if uid_str in USER_PAUSED.get(username, set()) or acc_id in USER_PAUSED.get(username, set()):
-                    break
-                if USER_STATUS.get(username, {}).get(uid_str) in ("DONE", "ERROR", "WAITING", "PAUSED"):
-                    break
-
-                await asyncio.sleep(3)
-            finally:
-                _CURRENT_OWNER.reset(cv)
-        except asyncio.CancelledError:
-            print(f"[auth] Guest worker cancelled user={username} uid={uid_str}", flush=True)
-            break
-        except Exception as e:
-            print(f"[auth] Guest worker error user={username} uid={uid_str}: {e}", flush=True)
-            await asyncio.sleep(5)
+                    await asyncio.sleep(3)
+                finally:
+                    try:
+                        _CURRENT_OWNER.reset(cv)
+                    except Exception:
+                        pass
+            except asyncio.CancelledError:
+                print(f"[auth] Guest worker cancelled user={username} uid={uid_str}", flush=True)
+                break
+            except Exception as e:
+                print(f"[auth] Guest worker error user={username} uid={uid_str}: {e}", flush=True)
+                await asyncio.sleep(5)
+    finally:
+        try:
+            workers = USER_WORKERS.get(username)
+            if workers is not None:
+                if workers.get(uid_str) is asyncio.current_task():
+                    workers.pop(uid_str, None)
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    asyncio.create_task(sync_user_queue(username))
+        except (RuntimeError, Exception):
+            pass
 
 
 async def _token_worker(username, token):
@@ -673,74 +719,112 @@ async def _token_worker(username, token):
     except Exception:
         import app as m
     key = str(token)[:20]
-    while True:
-        try:
-            if key in USER_DELETED.get(username, set()) or key in USER_PAUSED.get(username, set()):
-                break
-            status = USER_STATUS.get(username, {}).get(key, "RUNNING")
-            if status != "RUNNING":
-                break
-
-            users = load_users()
-            u = users.get(username, {})
-            settings = get_user_settings(u)
-            max_retries = int(settings.get("login_retry", 3))
-
-            cv = _CURRENT_OWNER.set(username)
+    try:
+        while True:
             try:
-                print(f"[auth] Token login starting user={username} token={key}...", flush=True)
-                ad = None
+                if key in USER_DELETED.get(username, set()) or key in USER_PAUSED.get(username, set()):
+                    break
+                status = USER_STATUS.get(username, {}).get(key, "RUNNING")
+                if status != "RUNNING":
+                    break
+
+                users = load_users()
+                u = users.get(username, {})
+                settings = get_user_settings(u)
+                max_retries = int(settings.get("login_retry", 3))
+
+                cv = _CURRENT_OWNER.set(username)
                 try:
-                    ad = await m.process_account_token(token)
-                except Exception as ex:
-                    print(f"[auth] Token login exception for {key}: {ex}", flush=True)
+                    print(f"[auth] Token login starting user={username} token={key}...", flush=True)
+                    ad = None
+                    try:
+                        ad = await m.process_account_token(token)
+                    except Exception as ex:
+                        print(f"[auth] Token login exception for {key}: {ex}", flush=True)
 
-                if not ad:
-                    retries = USER_RETRIES.setdefault(username, {}).get(key, 0) + 1
-                    USER_RETRIES[username][key] = retries
-                    print(f"[auth] Token login FAILED user={username} token={key} ({retries}/{max_retries})", flush=True)
-                    if retries >= max_retries:
-                        USER_STATUS.setdefault(username, {})[key] = "ERROR"
-                        bot_state.log(f"Token {key} failed login {retries} times. Marked ERROR.", "error", key)
-                        asyncio.create_task(sync_user_queue(username))
+                    if not ad:
+                        retries = USER_RETRIES.setdefault(username, {}).get(key, 0) + 1
+                        USER_RETRIES[username][key] = retries
+                        print(f"[auth] Token login FAILED user={username} token={key} ({retries}/{max_retries})", flush=True)
+                        if retries >= max_retries:
+                            USER_STATUS.setdefault(username, {})[key] = "ERROR"
+                            bot_state.log(f"Token {key} failed login {retries} times. Marked ERROR.", "error", key)
+                            break
+                        await asyncio.sleep(8)
+                        continue
+
+                    USER_RETRIES.setdefault(username, {})[key] = 0
+                    USER_STATUS.setdefault(username, {})[key] = "RUNNING"
+                    acc_id = str(ad.get("account_id", ""))
+
+                    if key in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
                         break
-                    await asyncio.sleep(8)
-                    continue
+                    if key in USER_PAUSED.get(username, set()) or acc_id in USER_PAUSED.get(username, set()):
+                        break
 
-                USER_RETRIES.setdefault(username, {})[key] = 0
-                USER_STATUS.setdefault(username, {})[key] = "RUNNING"
-                acc_id = str(ad.get("account_id", ""))
+                    mode_pref = settings.get("game_mode", "AUTO")
+                    if mode_pref == "ONLY_BR":
+                        bot_state.set_account_mode(acc_id, "BR")
+                    elif mode_pref == "ONLY_CS":
+                        bot_state.set_account_mode(acc_id, "LW")
 
-                if key in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
-                    break
-                if key in USER_PAUSED.get(username, set()) or acc_id in USER_PAUSED.get(username, set()):
-                    break
+                    print(f"[auth] Token login OK user={username} acc_id={acc_id}", flush=True)
+                    await m.run_account_worker(ad, acc_id)
 
-                mode_pref = settings.get("game_mode", "AUTO")
-                if mode_pref == "ONLY_BR":
-                    bot_state.set_account_mode(acc_id, "BR")
-                elif mode_pref == "ONLY_CS":
-                    bot_state.set_account_mode(acc_id, "LW")
+                    # Check target completion after match
+                    users = load_users()
+                    u = users.get(username, {})
+                    settings = get_user_settings(u)
+                    exp_limit = int(settings.get("exp_limit", 0))
+                    level_limit = int(settings.get("level_limit", 0))
+                    target_delete = bool(settings.get("target_delete", False))
+                    live_acc = ds.bot_state.accounts.get(acc_id) or ds.bot_state.accounts.get(key)
+                    cur_gained = live_acc.get("gained_exp", 0) if live_acc else 0
+                    cur_level = live_acc.get("level", 1) if live_acc else 1
+                    is_done = False
+                    if exp_limit > 0 and cur_gained >= exp_limit:
+                        is_done = True
+                    if level_limit > 0 and cur_level >= level_limit:
+                        is_done = True
+                    if is_done:
+                        USER_STATUS.setdefault(username, {})[key] = "DONE"
+                        ds.bot_state.log(f"Token {key} reached target! (Lvl {cur_level}, Gained {cur_gained})", "success", key)
+                        if target_delete:
+                            USER_DELETED.setdefault(username, set()).add(key)
+                            u["accounts"] = [a for a in u.get("accounts", []) if str(a.get("token", ""))[:20] != key]
+                            save_users(users)
+                        break
 
-                print(f"[auth] Token login OK user={username} acc_id={acc_id}", flush=True)
-                await m.run_account_worker(ad, acc_id)
+                    if key in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
+                        break
+                    if key in USER_PAUSED.get(username, set()) or acc_id in USER_PAUSED.get(username, set()):
+                        break
+                    if USER_STATUS.get(username, {}).get(key) in ("DONE", "ERROR", "WAITING", "PAUSED", "OFFLINE"):
+                        break
 
-                if key in USER_DELETED.get(username, set()) or acc_id in USER_DELETED.get(username, set()):
-                    break
-                if key in USER_PAUSED.get(username, set()) or acc_id in USER_PAUSED.get(username, set()):
-                    break
-                if USER_STATUS.get(username, {}).get(key) in ("DONE", "ERROR", "WAITING", "PAUSED"):
-                    break
-
-                await asyncio.sleep(3)
-            finally:
-                _CURRENT_OWNER.reset(cv)
-        except asyncio.CancelledError:
-            print(f"[auth] Token worker cancelled user={username}", flush=True)
-            break
-        except Exception as e:
-            print(f"[auth] Token worker error user={username}: {e}", flush=True)
-            await asyncio.sleep(5)
+                    await asyncio.sleep(3)
+                finally:
+                    try:
+                        _CURRENT_OWNER.reset(cv)
+                    except Exception:
+                        pass
+            except asyncio.CancelledError:
+                print(f"[auth] Token worker cancelled user={username}", flush=True)
+                break
+            except Exception as e:
+                print(f"[auth] Token worker error user={username}: {e}", flush=True)
+                await asyncio.sleep(5)
+    finally:
+        try:
+            workers = USER_WORKERS.get(username)
+            if workers is not None:
+                if workers.get(key) is asyncio.current_task():
+                    workers.pop(key, None)
+                loop = asyncio.get_running_loop()
+                if loop.is_running():
+                    asyncio.create_task(sync_user_queue(username))
+        except (RuntimeError, Exception):
+            pass
 
 
 async def h_root(req):
@@ -845,12 +929,15 @@ async def h_stats(req):
         _LAST_SYNC[un] = now
         asyncio.create_task(sync_user_accounts_to_disk(un))
 
-    if not expired and un not in USER_WORKERS:
-        asyncio.create_task(start_user_workers(un))
+    user_workers = USER_WORKERS.get(un, {})
+    active_worker_count = len([t for t in user_workers.values() if not t.done()])
+    active_slots = max(1, int(settings.get("active_slots", 10)))
+    total_acc_count = len(u.get("accounts", []))
+    if not expired and (un not in USER_WORKERS or (active_worker_count < min(active_slots, total_acc_count) and settings.get("all_bots", True))):
+        asyncio.create_task(sync_user_queue(un))
 
     out = []
     seen_keys = set()
-    user_workers = USER_WORKERS.get(un, {})
 
     # Read live bot state
     for uid, a in list(ds.bot_state.accounts.items()):
@@ -871,6 +958,8 @@ async def h_stats(req):
             st = "ERROR"
         elif is_worker_alive:
             st = "RUNNING"
+        elif status_map.get(k_str) == "OFFLINE" or a.get("status") == "OFFLINE":
+            st = "OFFLINE"
         else:
             st = status_map.get(k_str, "WAITING")
 
@@ -936,6 +1025,8 @@ async def h_stats(req):
             st = "ERROR"
         elif is_worker_alive:
             st = "RUNNING"
+        elif status_map.get(key_str) == "OFFLINE" or acc.get("status") == "OFFLINE":
+            st = "OFFLINE"
         else:
             st = status_map.get(key_str, "WAITING")
 
@@ -1073,74 +1164,96 @@ async def h_acc_bulk_add(req):
     lines = text.splitlines() if text else []
     added = 0
     accs = u.setdefault("accounts", [])
-    existing_uids = {str(a.get("uid")) for a in accs if a.get("type") == "guest"}
-    existing_tokens = {str(a.get("token")) for a in accs if a.get("type") == "token"}
+    deleted_set = USER_DELETED.setdefault(un, set())
+    paused_set = USER_PAUSED.setdefault(un, set())
+    retries_map = USER_RETRIES.setdefault(un, {})
+    status_map = USER_STATUS.setdefault(un, {})
+
+    def _unmark_and_reset(k):
+        deleted_set.discard(k)
+        paused_set.discard(k)
+        retries_map[k] = 0
+        status_map[k] = "WAITING"
+        try:
+            ds.cache_invalidate(k)
+        except Exception:
+            pass
+
+    def _add_or_update_guest(uid, pw):
+        nonlocal added
+        _unmark_and_reset(uid)
+        for a in accs:
+            if a.get("type") == "guest" and str(a.get("uid")) == uid:
+                a["password"] = pw
+                a["status"] = "WAITING"
+                added += 1
+                return
+        accs.append({
+            "type": "guest",
+            "uid": uid,
+            "password": pw,
+            "created_at": time.time(),
+            "initial_exp": 0,
+            "last_exp": 0,
+            "gained_exp": 0,
+            "last_level": 1,
+            "matches_played": 0,
+            "status": "WAITING"
+        })
+        added += 1
+
+    def _add_or_update_token(tk):
+        nonlocal added
+        prefix = tk[:20]
+        _unmark_and_reset(prefix)
+        _unmark_and_reset(tk)
+        for a in accs:
+            if a.get("type") == "token" and str(a.get("token")) == tk:
+                a["status"] = "WAITING"
+                added += 1
+                return
+        accs.append({
+            "type": "token",
+            "token": tk,
+            "created_at": time.time(),
+            "initial_exp": 0,
+            "last_exp": 0,
+            "gained_exp": 0,
+            "last_level": 1,
+            "matches_played": 0,
+            "status": "WAITING"
+        })
+        added += 1
 
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        if ":" in line:
-            parts = line.split(":", 1)
+        # Support separator :, |, or ,
+        sep = None
+        for s_cand in (":", "|", ","):
+            if s_cand in line:
+                sep = s_cand
+                break
+        if sep:
+            parts = line.split(sep, 1)
             uid = parts[0].strip()
             pw = parts[1].strip()
-            if uid and pw and uid not in existing_uids:
-                accs.append({
-                    "type": "guest",
-                    "uid": uid,
-                    "password": pw,
-                    "created_at": time.time(),
-                    "initial_exp": 0,
-                    "last_exp": 0,
-                    "gained_exp": 0,
-                    "last_level": 1,
-                    "matches_played": 0,
-                    "status": "WAITING"
-                })
-                existing_uids.add(uid)
-                added += 1
+            if uid and pw:
+                _add_or_update_guest(uid, pw)
         elif len(line) >= 10:
-            tk = line
-            if tk not in existing_tokens:
-                accs.append({
-                    "type": "token",
-                    "token": tk,
-                    "created_at": time.time(),
-                    "initial_exp": 0,
-                    "last_exp": 0,
-                    "gained_exp": 0,
-                    "last_level": 1,
-                    "matches_played": 0,
-                    "status": "WAITING"
-                })
-                existing_tokens.add(tk)
-                added += 1
+            _add_or_update_token(line)
 
     for a_in in accounts_input:
         if "uid" in a_in and "password" in a_in:
             uid = str(a_in["uid"]).strip()
             pw = str(a_in["password"]).strip()
-            if uid and pw and uid not in existing_uids:
-                accs.append({
-                    "type": "guest",
-                    "uid": uid,
-                    "password": pw,
-                    "created_at": time.time(),
-                    "status": "WAITING"
-                })
-                existing_uids.add(uid)
-                added += 1
+            if uid and pw:
+                _add_or_update_guest(uid, pw)
         elif "token" in a_in:
             tk = str(a_in["token"]).strip()
-            if tk and tk not in existing_tokens:
-                accs.append({
-                    "type": "token",
-                    "token": tk,
-                    "created_at": time.time(),
-                    "status": "WAITING"
-                })
-                existing_tokens.add(tk)
-                added += 1
+            if tk:
+                _add_or_update_token(tk)
 
     u["accounts"] = accs
     users[un] = u
@@ -1245,6 +1358,7 @@ async def h_acc_clear_all(req):
         save_users(users)
     USER_STATUS.pop(un, None)
     USER_PAUSED.pop(un, None)
+    USER_DELETED.pop(un, None)
     USER_RETRIES.pop(un, None)
     for k in list(ds.bot_state.accounts.keys()):
         if ds.bot_state.accounts[k].get("_owner") == un:
@@ -1876,6 +1990,20 @@ async def expiry_watcher():
         await asyncio.sleep(5)
 
 
+async def queue_watcher():
+    """Continuously ensures waiting accounts are promoted to running slots when free."""
+    while True:
+        try:
+            users = load_users()
+            now = time.time()
+            for un, u in users.items():
+                if now < u.get("expires_at", 0):
+                    await sync_user_queue(un)
+        except Exception:
+            pass
+        await asyncio.sleep(3)
+
+
 async def start_web_dashboard(host="0.0.0.0", port=20335):
     app = web.Application()
 
@@ -1920,6 +2048,7 @@ async def start_web_dashboard(host="0.0.0.0", port=20335):
     print(f"Admin Panel: http://{host}:{port}{ADMIN_PATH}", flush=True)
 
     asyncio.create_task(expiry_watcher())
+    asyncio.create_task(queue_watcher())
 
     try:
         users = load_users()
