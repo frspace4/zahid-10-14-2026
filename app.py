@@ -489,7 +489,7 @@ async def get_playstore_version():
                 return result.get("version")
         except Exception:
             pass
-    return "1.132.10"
+    return "1.132.11"
 
 
 async def version_config():
@@ -506,11 +506,11 @@ async def version_config():
         response.raise_for_status()
         data = response.json()
         server_url = data.get("server_url") or "https://loginbp.ppmainecoonghj.com/"
-        remote_version = data.get("remote_version") or "1.132.10"
+        remote_version = data.get("remote_version") or "1.132.11"
         latest_release_version = data.get("latest_release_version") or "OB55"
         return latest_release_version, remote_version, server_url
     except Exception:
-        return "OB55", "1.132.10", "https://loginbp.ppmainecoonghj.com/"
+        return "OB55", "1.132.11", "https://loginbp.ppmainecoonghj.com/"
 
 
 async def get_access_token(uid, password):
@@ -662,81 +662,108 @@ def parse_majorlogin_data(response_content: bytes, uid: str = "") -> Tuple[Optio
     return None, None
 
 
+def enc_varint(n):
+    out = []
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n: b |= 0x80
+        out.append(b)
+        if not n: break
+    return bytes(out)
+
+
+def proto_varint(f, v):
+    return enc_varint((f << 3) | 0) + enc_varint(v)
+
+
+def proto_length(f, v):
+    v = v.encode() if isinstance(v, str) else v
+    return enc_varint((f << 3) | 2) + enc_varint(len(v)) + v
+
+
+def build_proto(fields):
+    pkt = bytearray()
+    for f, v in fields.items():
+        if isinstance(v, dict):
+            pkt.extend(proto_length(f, build_proto(v)))
+        elif isinstance(v, int):
+            pkt.extend(proto_varint(f, v))
+        elif isinstance(v, (str, bytes)):
+            pkt.extend(proto_length(f, v))
+    return bytes(pkt)
+
+
 async def build_majorlogin_payload(open_id, access_token, platform, client_version, device_info):
     try:
-        major_login = MajoRLoGinrEq_pb2.MajorLogin()
-        major_login.open_id = open_id
-        major_login.access_token = access_token
-        major_login.client_version = client_version
-        major_login.event_time = str(datetime.now())[:-7]
-        major_login.game_name = "free fire"
-        major_login.platform_id = 1
-
         dev = device_info if isinstance(device_info, dict) else {}
         uid_dev = dev.get("unique_device_id")
         if not uid_dev or "00000000" in uid_dev:
             uid_dev = f"Google|{str(uuid.uuid4())}"
-        major_login.unique_device_id = uid_dev
 
-        brand = dev.get("brand", "Xiaomi")
-        model = dev.get("model", "2201122G")
-        dev_model = f"{brand} {model}".strip() if brand.lower() not in model.lower() else model
-        major_login.device_model = dev_model
-
-        major_login.system_software = dev.get("system_software") or "Android OS 13 / API-33"
-        major_login.system_hardware = "Handheld"
-        major_login.telecom_operator = "Grameenphone"
-        major_login.network_type = "WIFI"
-        major_login.screen_width = int(dev.get("screen_width", 1080))
-        major_login.screen_height = int(dev.get("screen_height", 2400))
-        major_login.screen_dpi = str(dev.get("screen_dpi", "400"))
-        major_login.processor_details = dev.get("processor_details") or "ARM64 FP ASIMD AES VMH | 2800 | 8"
-        major_login.memory = int(dev.get("memory", 4096))
-        major_login.gpu_renderer = dev.get("gpu_renderer") or "Adreno (TM) 730"
-        major_login.gpu_version = "OpenGL ES 3.2"
-        major_login.client_ip = dev.get("client_ip") or "103.119.38.133"
-        major_login.language = "en"
-        major_login.open_id_type = "4"
-        major_login.device_type = "Handheld"
-        major_login.country_code = "BD"
-        major_login.platform_sdk_id = 1
-        major_login.network_operator_a = "Grameenphone"
-        major_login.network_type_a = "WIFI"
-        major_login.client_using_version = "1ac4b80ecf0478a44203bf8fac6120f5"
-        major_login.external_storage_total = 53041
-        major_login.external_storage_available = 7291
-        major_login.internal_storage_total = 2176
-        major_login.game_disk_storage_available = 7395
-        major_login.game_disk_storage_total = 53041
-        major_login.external_sdcard_avail_storage = 7395
-        major_login.external_sdcard_total_storage = 53041
-        major_login.field_70 = 4
-        major_login.login_by = 2
-        major_login.library_path = "/data/app/com.dts.freefireth-yAPXAhp2RyIlrtNAM0VzKQ==/lib/arm64"
-        major_login.reg_avatar = 1
-        major_login.library_token = "066a589fa3f5658377634fe7b1d88556|/data/app/com.dts.freefireth-yAPXAhp2RyIlrtNAM0VzKQ==/base.apk"
-        major_login.channel_type = 6
-        major_login.cpu_type = 1
-        major_login.cpu_architecture = "64"
-        major_login.client_version_code = "2019121227"
-        major_login.field_85 = 3
-        major_login.graphics_api = "OpenGLES3"
-        major_login.supported_astc_bitset = 3071
-        major_login.login_open_id_type = 4
-        major_login.loading_time = 9329
-        major_login.release_channel = "3rd_party"
-        major_login.extra_info = "KqsHT3r+fXQIu/dyZrEa8fJBhbJ5uqDES7YsAUfu+Mck9A+Bly6lFfYk7Q7Nj68pqI8I3g4Oz3gLxWef6Eh/jKyzHug="
-        major_login.android_engine_init_flag = 111207
-        major_login.field_96 = json.dumps({"cur_rate": None, "support_etc2": False}, separators=(',', ':'))
-        major_login.if_push = 1
-        major_login.origin_platform_type = "4"
-        major_login.primary_platform_type = "4"
-        major_login.field_102 = bytes.fromhex("42 54 4c 10 53 0e 5b 04 30")
-        major_login.field_104 = 47591
-        major_login.field_105 = 1
-        major_login.field_106 = "https://dl-bs.ggpolarbear.com/live/ABHotUpdates/|https://core-bs.ggpolarbear.com/live/ABHotUpdates/|1c2462939e53942fc995400436a3dc7b"
-        major_login.field_107 = "c8e41b7a93f02d56e1a94c7b8203f5d1"
-        string = major_login.SerializeToString()
+        fields = {
+            3: str(datetime.now())[:-7],
+            4: "free fire",
+            5: 1,
+            7: client_version or "1.132.11",
+            8: "Android OS 10 / API-29 (NHG47O/eng.build.20231013.013027)",
+            9: "Handheld",
+            10: "Grameenphone",
+            11: "WIFI",
+            12: 1708,
+            13: 750,
+            14: "440",
+            15: "ARM64 FP ASIMD AES | 2850 | 8",
+            16: 3968,
+            17: "Mali-G610 MC6",
+            18: "OpenGL ES 3.2 v1.r32p1-01eac0.54329dee8f160f288c574caaf67bbe3f",
+            19: uid_dev,
+            20: dev.get("client_ip") or "103.205.36.2",
+            21: "en",
+            22: open_id,
+            23: "4",
+            24: "Handheld",
+            25: "Google Pixel",
+            26: "BD",
+            29: access_token,
+            30: 1,
+            41: "Grameenphone",
+            42: "WIFI",
+            57: "7428b253defc164018c604a1ebbfebdf",
+            60: 109029,
+            61: 37616,
+            62: 2048,
+            63: 804,
+            64: 37616,
+            65: 109029,
+            66: 37616,
+            67: 109029,
+            73: 3,
+            74: "/data/app/com.dts.freefireth-oiglMJkEoNJlsRci10280Q==/lib/arm64",
+            76: 1,
+            77: "b8e0cd5e295eee42f5860d3c86e483dd|/data/app/com.dts.freefireth-oiglMJkEoNJlsRci10280Q==/base.apk",
+            78: 3,
+            79: 2,
+            81: "64",
+            83: "2019121229",
+            85: 3,
+            86: "OpenGLES2",
+            87: 511,
+            88: 4,
+            92: 36711,
+            93: "android",
+            94: "KqsHT8at0g7Na/G7iOeF1IpesHMf+HoePFMFFE8Tq/dSk4fIbJ1j8TdV8OAyWIVnSmD2rM6vfFMtCD8Ig7iROgDJmIMrdtcB6orwuNRpMr4MVu3D7FoTcuQdq/8EyOkRQiUrbg==",
+            96: '{"cur_rate":null,"support_etc2":false}',
+            97: 1,
+            99: "4",
+            100: "4",
+            102: bytes.fromhex("4000434f07555f0637"),
+            104: 1797,
+            105: 1,
+            106: "https://dl.cdn.freefiremobile.com/live/ABHotUpdates/|https://dl-core.cdn.freefiremobile.com/live/ABHotUpdates/|4a0070ac356973792f002e0b25b96c3b",
+            107: "c8e41b7a93f02d56e1a94c7b8203f5d1"
+        }
+        string = build_proto(fields)
         return await aes_encrypt(string, AES_KEY, AES_IV)
     except Exception as e:
         print_error(f"build_majorlogin_payload: {type(e).__name__}: {e}")
@@ -745,9 +772,20 @@ async def build_majorlogin_payload(open_id, access_token, platform, client_versi
 
 async def send_majorlogin(data, release_version, server_url, uid=""):
     try:
-        url = f"{server_url}MajorLogin"
-        req_headers = headers.copy()
-        req_headers["ReleaseVersion"] = release_version
+        url = f"{server_url.rstrip('/')}/MajorLogin"
+        req_headers = {
+            "X-Unity-Version": "2018.4.12f1",
+            "ReleaseVersion": release_version or "OB55",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": "Bearer",
+            "Accept": "*/*",
+            "Expect": "100-continue",
+            "X-GA": "v1 1",
+            "X-GA-SV": str(int(time.time())),
+            "User-Agent": "UnityPlayer/2018.4.12f1 (UnityWebRequest/1.0, libcurl/8.5.0-DEV)",
+            "Connection": "Keep-Alive",
+            "Accept-Encoding": "deflate, gzip"
+        }
         response = await client.post(url, headers=req_headers, data=data)
         if response.status_code != 200:
             print_error(f"MajorLogin HTTP {response.status_code}: {response.text[:200]}")
