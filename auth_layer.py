@@ -769,8 +769,9 @@ async def sync_user_queue(username: str):
             k = get_account_key(acc)
             if not k or k in deleted or k in paused:
                 continue
-            cur_st = status_map.get(k, "WAITING")
-            if cur_st in ("DONE", "ERROR", "OFFLINE"):
+            cur_st = status_map.get(k) or acc.get("status", "WAITING")
+            if cur_st in ("DONE", "ERROR", "BANNED", "OFFLINE"):
+                status_map[k] = cur_st
                 continue
             desired_running_keys.append(k)
 
@@ -780,7 +781,7 @@ async def sync_user_queue(username: str):
                 t = workers.pop(k, None)
                 if t and not t.done():
                     t.cancel()
-                if status_map.get(k) not in ("DONE", "ERROR", "PAUSED", "OFFLINE"):
+                if status_map.get(k) not in ("DONE", "ERROR", "BANNED", "PAUSED", "OFFLINE"):
                     status_map[k] = "WAITING"
 
         # Spawn workers for desired accounts that do not have active workers yet
@@ -806,7 +807,7 @@ async def sync_user_queue(username: str):
                 status_map[k] = "PAUSED"
             elif k in workers and not workers[k].done():
                 status_map[k] = "RUNNING"
-            elif status_map.get(k) not in ("DONE", "ERROR", "PAUSED", "OFFLINE"):
+            elif status_map.get(k) not in ("DONE", "ERROR", "BANNED", "PAUSED", "OFFLINE"):
                 status_map[k] = "WAITING"
 
 
