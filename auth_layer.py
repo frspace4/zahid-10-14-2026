@@ -856,6 +856,18 @@ async def _guest_worker(username, uid, password):
                     except Exception as ex:
                         print(f"[auth] Login exception for {uid_str}: {ex}", flush=True)
 
+                    if isinstance(ad, dict) and ad.get("error_type") == "BANNED":
+                        USER_STATUS.setdefault(username, {})[uid_str] = "BANNED"
+                        users = load_users()
+                        u_accs = users.get(username, {}).get("accounts", [])
+                        for a in u_accs:
+                            if str(a.get("uid")) == uid_str:
+                                a["status"] = "BANNED"
+                                break
+                        save_users(users)
+                        print(f"[auth] Account {uid_str} is BANNED by Garena. Halting worker without retry.", flush=True)
+                        break
+
                     if not ad:
                         retries = USER_RETRIES.setdefault(username, {}).get(uid_str, 0) + 1
                         USER_RETRIES[username][uid_str] = retries
@@ -988,6 +1000,18 @@ async def _token_worker(username, token):
                         ad = await m.process_account_token(token)
                     except Exception as ex:
                         print(f"[auth] Token login exception for {key}: {ex}", flush=True)
+
+                    if isinstance(ad, dict) and ad.get("error_type") == "BANNED":
+                        USER_STATUS.setdefault(username, {})[key] = "BANNED"
+                        users = load_users()
+                        u_accs = users.get(username, {}).get("accounts", [])
+                        for a in u_accs:
+                            if str(a.get("token") or a.get("uid")) == key:
+                                a["status"] = "BANNED"
+                                break
+                        save_users(users)
+                        print(f"[auth] Token {key} is BANNED by Garena. Halting worker without retry.", flush=True)
+                        break
 
                     if not ad:
                         retries = USER_RETRIES.setdefault(username, {}).get(key, 0) + 1
@@ -1191,6 +1215,8 @@ async def h_stats(req):
         # Determine queue status
         if is_paused:
             st = "PAUSED"
+        elif status_map.get(k_str) == "BANNED" or a.get("status") == "BANNED":
+            st = "BANNED"
         elif status_map.get(k_str) == "DONE":
             st = "DONE"
         elif status_map.get(k_str) == "ERROR":
@@ -1257,6 +1283,8 @@ async def h_stats(req):
 
         if is_paused:
             st = "PAUSED"
+        elif status_map.get(key_str) == "BANNED" or acc.get("status") == "BANNED":
+            st = "BANNED"
         elif status_map.get(key_str) == "DONE":
             st = "DONE"
         elif status_map.get(key_str) == "ERROR":
@@ -1305,7 +1333,7 @@ async def h_stats(req):
         out.append(acc_obj)
 
     # Sort accounts: RUNNING first, then WAITING, then others
-    status_order = {"RUNNING": 0, "WAITING": 1, "ONLINE": 2, "DONE": 3, "PAUSED": 4, "ERROR": 5, "OFFLINE": 6}
+    status_order = {"RUNNING": 0, "WAITING": 1, "ONLINE": 2, "DONE": 3, "PAUSED": 4, "ERROR": 5, "BANNED": 6, "OFFLINE": 7}
     out.sort(key=lambda x: (status_order.get(x["status"], 9), -x.get("gained_exp", 0)))
 
     # Compute Filter counts
@@ -1315,7 +1343,7 @@ async def h_stats(req):
         "waiting": sum(1 for a in out if a["status"] == "WAITING"),
         "done": sum(1 for a in out if a["status"] == "DONE"),
         "paused": sum(1 for a in out if a["status"] == "PAUSED"),
-        "error": sum(1 for a in out if a["status"] == "ERROR"),
+        "error": sum(1 for a in out if a["status"] in ("ERROR", "BANNED")),
         "offline": sum(1 for a in out if a["status"] == "OFFLINE"),
     }
 
@@ -1743,6 +1771,9 @@ async def h_acc_check(req):
                 return web.json_response({"status": "error", "error": "Login Failed - Invalid Token"})
     else:
         return web.json_response({"status": "error", "error": "Invalid Payload"})
+
+    if isinstance(acc_data, dict) and acc_data.get("error_type") == "BANNED":
+        return web.json_response({"status": "error", "error": acc_data.get("error", "Account Banned by Garena")})
 
     if not acc_data:
         return web.json_response({"status": "error", "error": "Login Failed"})

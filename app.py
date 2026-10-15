@@ -35,6 +35,11 @@ from Crypto.Util.Padding import pad
 from protobuf_decoder.protobuf_decoder import Parser
 from message_ids import MESSAGE_ID_TO_NAME
 
+try:
+    import blackboxprotobuf
+except Exception:
+    blackboxprotobuf = None
+
 import MajorLoginRes_pb2
 MajorLoginRes = MajorLoginRes_pb2.MajorLoginRes
 
@@ -569,6 +574,96 @@ async def decode_protobuf(data):
     return json.dumps(parsed_results_dict)
 
 
+def parse_majorlogin_data(response_content: bytes, uid: str = "") -> Tuple[Optional[Any], Optional[Dict]]:
+    if not response_content or len(response_content) < 20:
+        return None, None
+
+    proto_payload = response_content[64:] if len(response_content) > 64 else response_content
+
+    # 1. Standard protobuf parsing across candidate offsets
+    offsets_to_try = [0] + [i for i in range(1, min(128, len(proto_payload)))]
+    for off in offsets_to_try:
+        try:
+            cand = MajorLoginRes()
+            cand.ParseFromString(proto_payload[off:])
+            if cand.token and (cand.server_url or cand.lock_region):
+                return cand, None
+            if cand.HasField('blacklist') and (cand.blacklist.ban_type or cand.blacklist.ban_reason):
+                b_type = str(cand.blacklist.ban_type or "Blacklisted")
+                b_reason = int(cand.blacklist.ban_reason or 1)
+                b_time = int(cand.blacklist.ban_time or 0)
+                reason_map = {1: "IN_GAME_AUTO (Bot / Macro Detected)", 2: "REFUND", 3: "OTHERS", 4: "SKINMOD"}
+                reason_desc = reason_map.get(b_reason, f"Code {b_reason}")
+                ban_time_str = datetime.fromtimestamp(b_time).strftime('%Y-%m-%d %H:%M:%S') if b_time else "Permanent/Unknown"
+                return None, {
+                    "status": "BANNED",
+                    "ban_type": b_type,
+                    "reason": reason_desc,
+                    "ban_time": ban_time_str
+                }
+        except Exception:
+            pass
+
+    # 2. Blackboxprotobuf structural decode fallback
+    if blackboxprotobuf is not None:
+        try:
+            msg, _ = blackboxprotobuf.decode_message(proto_payload)
+            # Check for blacklist info at tag 13 or tag 12
+            bl = msg.get('13') or msg.get('12') or {}
+            if isinstance(bl, dict) and ('4' in bl or '1' in bl):
+                b_type = bl.get('4', b'')
+                if isinstance(b_type, bytes):
+                    b_type = b_type.decode('utf-8', errors='ignore')
+                b_reason = bl.get('1', 1)
+                b_time = bl.get('3', 0)
+                reason_map = {1: "IN_GAME_AUTO (Bot / Macro Detected)", 2: "REFUND", 3: "OTHERS", 4: "SKINMOD"}
+                reason_desc = reason_map.get(b_reason, f"Code {b_reason}")
+                ban_time_str = datetime.fromtimestamp(b_time).strftime('%Y-%m-%d %H:%M:%S') if b_time else "Permanent/Unknown"
+                return None, {
+                    "status": "BANNED",
+                    "ban_type": str(b_type or "Protection Bypass"),
+                    "reason": reason_desc,
+                    "ban_time": ban_time_str
+                }
+
+            # Check for successful login session
+            acc_id = msg.get('1')
+            lock_reg = msg.get('2')
+            tok = msg.get('8')
+            srv_url = msg.get('10')
+            if tok:
+                synth = MajorLoginRes()
+                synth.account_id = int(acc_id or 0)
+                if lock_reg:
+                    synth.lock_region = str(lock_reg.decode('utf-8', errors='ignore') if isinstance(lock_reg, bytes) else lock_reg)
+                else:
+                    synth.lock_region = "BD"
+                synth.token = str(tok.decode('utf-8', errors='ignore') if isinstance(tok, bytes) else tok)
+                if srv_url:
+                    synth.server_url = str(srv_url.decode('utf-8', errors='ignore') if isinstance(srv_url, bytes) else srv_url)
+                else:
+                    synth.server_url = "https://loginbp.ppmainecoonghj.com/"
+                if '21' in msg: synth.kts = int(msg['21'])
+                if '22' in msg: synth.ak = msg['22'] if isinstance(msg['22'], bytes) else bytes.fromhex(str(msg['22']))
+                if '23' in msg: synth.aiv = msg['23'] if isinstance(msg['23'], bytes) else bytes.fromhex(str(msg['23']))
+                return synth, None
+
+            # Check for login queue info
+            q = msg.get('13') or msg.get('12') or {}
+            if isinstance(q, dict) and ('3' in q or '2' in q):
+                wait_s = q.get('3', 0)
+                pos = q.get('2', 0)
+                return None, {
+                    "status": "QUEUE",
+                    "wait_secs": wait_s,
+                    "position": pos
+                }
+        except Exception:
+            pass
+
+    return None, None
+
+
 async def build_majorlogin_payload(open_id, access_token, platform, client_version, device_info):
     try:
         major_login = MajoRLoGinrEq_pb2.MajorLogin()
@@ -578,26 +673,36 @@ async def build_majorlogin_payload(open_id, access_token, platform, client_versi
         major_login.event_time = str(datetime.now())[:-7]
         major_login.game_name = "free fire"
         major_login.platform_id = 1
-        major_login.system_software = "Android OS 10 / API-29 (QP1A.190711.020/V12.0.26.0.QCDINXM)"
+
+        dev = device_info if isinstance(device_info, dict) else {}
+        uid_dev = dev.get("unique_device_id")
+        if not uid_dev or "00000000" in uid_dev:
+            uid_dev = f"Google|{str(uuid.uuid4())}"
+        major_login.unique_device_id = uid_dev
+
+        brand = dev.get("brand", "Xiaomi")
+        model = dev.get("model", "2201122G")
+        dev_model = f"{brand} {model}".strip() if brand.lower() not in model.lower() else model
+        major_login.device_model = dev_model
+
+        major_login.system_software = dev.get("system_software") or "Android OS 13 / API-33"
         major_login.system_hardware = "Handheld"
-        major_login.telecom_operator = "Ncell"
+        major_login.telecom_operator = "Grameenphone"
         major_login.network_type = "WIFI"
-        major_login.screen_width = 1600
-        major_login.screen_height = 720
-        major_login.screen_dpi = "320"
-        major_login.processor_details = "ARMv7 VFPv3 NEON | 2001 | 8"
-        major_login.memory = 3790
-        major_login.gpu_renderer = "PowerVR Rogue GE8320"
-        major_login.gpu_version = "OpenGL ES 3.2 build 1.11@5425693"
-        major_login.unique_device_id = "Google|00000000-0000-0000-0000-000000000000"
-        major_login.client_ip = "111.119.38.133"
+        major_login.screen_width = int(dev.get("screen_width", 1080))
+        major_login.screen_height = int(dev.get("screen_height", 2400))
+        major_login.screen_dpi = str(dev.get("screen_dpi", "400"))
+        major_login.processor_details = dev.get("processor_details") or "ARM64 FP ASIMD AES VMH | 2800 | 8"
+        major_login.memory = int(dev.get("memory", 4096))
+        major_login.gpu_renderer = dev.get("gpu_renderer") or "Adreno (TM) 730"
+        major_login.gpu_version = "OpenGL ES 3.2"
+        major_login.client_ip = dev.get("client_ip") or "103.119.38.133"
         major_login.language = "en"
         major_login.open_id_type = "4"
         major_login.device_type = "Handheld"
-        major_login.device_model = "Xiaomi M2006C3LII"
         major_login.country_code = "BD"
         major_login.platform_sdk_id = 1
-        major_login.network_operator_a = "Ncell"
+        major_login.network_operator_a = "Grameenphone"
         major_login.network_type_a = "WIFI"
         major_login.client_using_version = "1ac4b80ecf0478a44203bf8fac6120f5"
         major_login.external_storage_total = 53041
@@ -609,15 +714,15 @@ async def build_majorlogin_payload(open_id, access_token, platform, client_versi
         major_login.external_sdcard_total_storage = 53041
         major_login.field_70 = 4
         major_login.login_by = 2
-        major_login.library_path = "/data/app/com.dts.freefireth-yAPXAhp2RyIlrtNAM0VzKQ==/lib/arm"
+        major_login.library_path = "/data/app/com.dts.freefireth-yAPXAhp2RyIlrtNAM0VzKQ==/lib/arm64"
         major_login.reg_avatar = 1
         major_login.library_token = "066a589fa3f5658377634fe7b1d88556|/data/app/com.dts.freefireth-yAPXAhp2RyIlrtNAM0VzKQ==/base.apk"
         major_login.channel_type = 6
         major_login.cpu_type = 1
-        major_login.cpu_architecture = "32"
+        major_login.cpu_architecture = "64"
         major_login.client_version_code = "2019121227"
         major_login.field_85 = 3
-        major_login.graphics_api = "OpenGLES2"
+        major_login.graphics_api = "OpenGLES3"
         major_login.supported_astc_bitset = 3071
         major_login.login_open_id_type = 4
         major_login.loading_time = 9329
@@ -640,7 +745,7 @@ async def build_majorlogin_payload(open_id, access_token, platform, client_versi
         return None
 
 
-async def send_majorlogin(data, release_version, server_url):
+async def send_majorlogin(data, release_version, server_url, uid=""):
     try:
         url = f"{server_url}MajorLogin"
         req_headers = headers.copy()
@@ -650,28 +755,16 @@ async def send_majorlogin(data, release_version, server_url):
             print_error(f"MajorLogin HTTP {response.status_code}: {response.text[:200]}")
             return None
         response_content = response.content
-        if len(response_content) < 40:
+        if len(response_content) < 20:
             return None
-        proto_payload = response_content[64:] if len(response_content) > 64 else response_content
 
-        res_proto = MajorLoginRes()
-        try:
-            res_proto.ParseFromString(proto_payload)
-            if res_proto.lock_region and res_proto.token:
-                return res_proto
-        except Exception:
-            pass
+        res_proto, special_info = parse_majorlogin_data(response_content, uid)
+        if res_proto is not None:
+            return res_proto
+        if special_info:
+            return special_info
 
-        for offset in range(min(128, len(proto_payload))):
-            try:
-                candidate = MajorLoginRes()
-                candidate.ParseFromString(proto_payload[offset:])
-                if candidate.lock_region and candidate.token:
-                    return candidate
-            except Exception:
-                pass
-
-        print_error("MajorLogin parse failed at all offsets")
+        print_error(f"MajorLogin unparseable response (len: {len(response_content)})")
         return None
     except Exception as e:
         print_error(f"send_majorlogin EXC: {type(e).__name__}: {e}")
@@ -1760,8 +1853,17 @@ async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
         open_id, access_token, platform = tokengrant_response
         device_info = get_device_for_account(uid)
         login_payload_data = await build_majorlogin_payload(open_id, access_token, platform, client_version, device_info)
-        majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url)
-        if majorlogin_response is None:
+        majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url, uid=uid)
+        if isinstance(majorlogin_response, dict) and majorlogin_response.get("status") == "BANNED":
+            ban_type = majorlogin_response.get("ban_type", "Protection Bypass")
+            reason_str = majorlogin_response.get("reason", "Anti-Cheat")
+            ban_time = majorlogin_response.get("ban_time", "Permanent/Unknown")
+            msg = f"Account {uid} BANNED by Garena: {ban_type} ({reason_str}) until {ban_time}"
+            print_error(f"[BAN] {msg}")
+            bot_state.log(msg, "error", uid)
+            bot_state.update_status(uid, "BANNED")
+            return {"error_type": "BANNED", "error": msg}
+        if majorlogin_response is None or not hasattr(majorlogin_response, "token"):
             return None
         getlogin_result = await send_getlogin(login_payload_data, majorlogin_response.server_url, majorlogin_response.token, release_version)
         if getlogin_result is None:
@@ -1856,8 +1958,17 @@ async def process_account_token(access_token: str) -> Optional[Dict]:
         login_payload_data = await build_majorlogin_payload(open_id, access_token, str(platform), client_version, device_info)
         if not login_payload_data:
             return None
-        majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url)
-        if majorlogin_response is None:
+        majorlogin_response = await send_majorlogin(login_payload_data, release_version, server_url, uid=open_id)
+        if isinstance(majorlogin_response, dict) and majorlogin_response.get("status") == "BANNED":
+            ban_type = majorlogin_response.get("ban_type", "Protection Bypass")
+            reason_str = majorlogin_response.get("reason", "Anti-Cheat")
+            ban_time = majorlogin_response.get("ban_time", "Permanent/Unknown")
+            msg = f"Account {open_id} BANNED by Garena: {ban_type} ({reason_str}) until {ban_time}"
+            print_error(f"[BAN] {msg}")
+            bot_state.log(msg, "error", open_id)
+            bot_state.update_status(open_id, "BANNED")
+            return {"error_type": "BANNED", "error": msg}
+        if majorlogin_response is None or not hasattr(majorlogin_response, "token"):
             return None
         getlogin_result = await send_getlogin(login_payload_data, majorlogin_response.server_url, majorlogin_response.token, release_version)
         if getlogin_result is None:

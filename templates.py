@@ -896,6 +896,7 @@ function getVisibleAccounts(){
   return cachedAccounts.filter(acc => {
     if(currentFilter === 'all') return true;
     const st = (acc.status || '').toLowerCase();
+    if(currentFilter === 'error') return st === 'error' || st === 'banned';
     return st === currentFilter;
   });
 }
@@ -948,7 +949,7 @@ function renderCards(){
     if(status === 'RUNNING' || status === 'LIVE') stCls = 'status-running';
     else if(status === 'DONE') stCls = 'status-done';
     else if(status === 'PAUSED') stCls = 'status-paused';
-    else if(status === 'ERROR') stCls = 'status-error';
+    else if(status === 'ERROR' || status === 'BANNED') stCls = 'status-error';
     else if(status === 'OFFLINE') stCls = 'status-offline';
 
     // Progress and ETA
