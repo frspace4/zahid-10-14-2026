@@ -866,6 +866,7 @@ async def _guest_worker(username, uid, password):
                                 a["status"] = "BANNED"
                                 break
                         save_users(users)
+                        sync_accounts_json_file(username, u_accs)
                         print(f"[auth] Account {uid_str} is BANNED by Garena. Halting worker without retry.", flush=True)
                         break
 
@@ -1011,6 +1012,7 @@ async def _token_worker(username, token):
                                 a["status"] = "BANNED"
                                 break
                         save_users(users)
+                        sync_accounts_json_file(username, u_accs)
                         print(f"[auth] Token {key} is BANNED by Garena. Halting worker without retry.", flush=True)
                         break
 
