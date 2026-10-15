@@ -489,7 +489,7 @@ async def get_playstore_version():
                 return result.get("version")
         except Exception:
             pass
-    return "1.108.1"
+    return "1.132.10"
 
 
 async def version_config():
@@ -505,14 +505,12 @@ async def version_config():
         response = await client.get(api_url)
         response.raise_for_status()
         data = response.json()
-        server_url = data.get("server_url")
-        remote_version = data.get("remote_version")
-        latest_release_version = data.get("latest_release_version")
-        if not server_url or not remote_version or not latest_release_version:
-            return None
+        server_url = data.get("server_url") or "https://loginbp.ppmainecoonghj.com/"
+        remote_version = data.get("remote_version") or "1.132.10"
+        latest_release_version = data.get("latest_release_version") or "OB55"
         return latest_release_version, remote_version, server_url
     except Exception:
-        return None
+        return "OB55", "1.132.10", "https://loginbp.ppmainecoonghj.com/"
 
 
 async def get_access_token(uid, password):
@@ -1017,7 +1015,7 @@ async def sv_frame(msg_key, layout, send_option, cmd, order_id, flags, content, 
 
 
 async def build_match_startup_packets(token, udp_key, match_code, account_id, block_val,
-                                      server_ip="", region="BD", client_version="1.132.6",
+                                      server_ip="", region="BD", client_version="1.132.10",
                                       client_version_code="2019121227", access_token="",
                                       mode_id=1, map_id=1):
     token = token.strip()
