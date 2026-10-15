@@ -1856,7 +1856,7 @@ async def process_account_uid_pass(uid: str, password: str) -> Optional[Dict]:
             ban_type = majorlogin_response.get("ban_type", "Protection Bypass")
             reason_str = majorlogin_response.get("reason", "Anti-Cheat")
             ban_time = majorlogin_response.get("ban_time", "Permanent/Unknown")
-            msg = f"Account {uid} BANNED by Garena: {ban_type} ({reason_str}) until {ban_time}"
+            msg = f"Account {uid} BANNED by Garena: {ban_type} ({reason_str}) [Banned on: {ban_time}]"
             print_error(f"[BAN] {msg}")
             bot_state.log(msg, "error", uid)
             bot_state.update_status(uid, "BANNED")
@@ -1961,7 +1961,7 @@ async def process_account_token(access_token: str) -> Optional[Dict]:
             ban_type = majorlogin_response.get("ban_type", "Protection Bypass")
             reason_str = majorlogin_response.get("reason", "Anti-Cheat")
             ban_time = majorlogin_response.get("ban_time", "Permanent/Unknown")
-            msg = f"Account {open_id} BANNED by Garena: {ban_type} ({reason_str}) until {ban_time}"
+            msg = f"Account {open_id} BANNED by Garena: {ban_type} ({reason_str}) [Banned on: {ban_time}]"
             print_error(f"[BAN] {msg}")
             bot_state.log(msg, "error", open_id)
             bot_state.update_status(open_id, "BANNED")
